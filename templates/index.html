@@ -129,8 +129,26 @@ header.top{
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
 
+/* ---------- conversation ---------- */
+.conversation{display:flex;flex-direction:column;min-height:52vh}
+.reading{margin-top:0}
+.threadnote{
+  font-size:12px;color:var(--muted);margin:0 0 18px;padding-bottom:10px;
+  border-bottom:1px solid var(--line);
+}
+.threadnote[hidden]{display:none}
+
+/* Pinned to the bottom of the conversation, not the window, so scrolling on
+   past it reaches the chart rather than fighting a fixed bar. */
+.ask{position:sticky;bottom:0;z-index:5;margin-top:auto}
+.ask:before{
+  content:'';position:absolute;left:0;right:0;top:-22px;height:22px;
+  background:linear-gradient(to bottom, transparent, var(--ink));
+  pointer-events:none;
+}
+.turnwhen{font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:6px}
+
 /* ---------- reading ---------- */
-.reading{margin-top:30px}
 .turn{margin-bottom:38px}
 .q{
   font-family:var(--serif);font-size:20px;font-style:italic;color:var(--brass);
@@ -276,23 +294,6 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .ubtn.bad{border-color:var(--weak);color:var(--weak)}
 .ubtn:disabled{opacity:.5}
 
-/* ---------- past readings ---------- */
-.history{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
-.history[hidden]{display:none}
-.history h2{font-family:var(--serif);font-weight:400;font-size:21px;margin:0 0 4px}
-.history .hsub{font-size:12px;color:var(--muted);margin:0 0 14px}
-.hitem{border:1px solid var(--line);border-radius:4px;background:var(--panel);margin-bottom:10px}
-.hitem summary{
-  cursor:pointer;list-style:none;padding:12px 14px;display:block;
-}
-.hitem summary::-webkit-details-marker{display:none}
-.hitem summary:hover{background:var(--panel-2)}
-.hitem[open] summary{border-bottom:1px solid var(--line)}
-.hq{font-family:var(--serif);font-size:16px;color:var(--text);line-height:1.4}
-.hmeta{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:5px}
-.hbody{padding:14px}
-.hempty{font-size:13px;color:var(--muted);font-style:italic}
-
 /* ---------- chart panel ---------- */
 .chartpanel{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
 .chartpanel[hidden]{display:none}
@@ -405,34 +406,32 @@ details.raw pre{
     </aside>
 
     <main>
-      <div class="ask">
-        <textarea id="q" rows="3" placeholder="What would you like to ask?"></textarea>
-        <div class="askbar">
-          <div class="chips">
-            <button class="chip" data-q="Read my chart as a whole. I am not asking about any particular period — tell me what the chart itself says about who I am and the shape of my life.">My chart</button>
-<button class="chip" data-q="Give me a reading for the week ahead.">This week</button>
-            <button class="chip" data-q="What does my chart say about my career and work right now?">Career</button>
-            <button class="chip" data-q="What does my chart say about money and finances at present?">Money</button>
-            <button class="chip" data-q="What is my current dasha period and what does it mean for me?">Current dasha</button>
+      <div class="conversation">
+        <div class="empty" id="empty">
+          Choose whose chart you are reading and who you would like to ask, then put your
+          question below. Every answer is worked out fresh from the birth chart, the
+          current planetary period and today's transits — the chart is never remembered
+          or reused between questions.
+        </div>
+
+        <p class="threadnote" id="threadnote" hidden></p>
+        <div class="reading" id="reading"></div>
+        <div id="err"></div>
+
+        <div class="ask" id="composer">
+          <textarea id="q" rows="2" placeholder="Ask about this chart…"></textarea>
+          <div class="askbar">
+            <div class="chips">
+              <button class="chip" data-q="Read my chart as a whole. I am not asking about any particular period — tell me what the chart itself says about who I am and the shape of my life.">My chart</button>
+              <button class="chip" data-q="Give me a reading for the week ahead.">This week</button>
+              <button class="chip" data-q="What does my chart say about my career and work right now?">Career</button>
+              <button class="chip" data-q="What does my chart say about money and finances at present?">Money</button>
+              <button class="chip" data-q="What is my current dasha period and what does it mean for me?">Current dasha</button>
+            </div>
+            <button class="send" id="send">Ask</button>
           </div>
-          <button class="send" id="send">Ask</button>
         </div>
       </div>
-
-      <div id="err"></div>
-      <div class="reading" id="reading"></div>
-
-      <div class="empty" id="empty">
-        Choose whose chart you are reading and who you would like to ask, then put your
-        question above. Every answer is worked out fresh from the birth chart, the
-        current planetary period and today's transits — nothing is remembered or reused.
-      </div>
-
-      <section class="history" id="historyBox" hidden>
-        <h2>Past readings</h2>
-        <p class="hsub" id="hcount"></p>
-        <div id="historyList"></div>
-      </section>
 
       <section class="chartpanel" id="chartBox" hidden>
         <div class="chead">
@@ -593,6 +592,7 @@ function drawProfiles(){
 
   document.querySelectorAll('.profile').forEach(b => b.onclick = () => {
     pid = +b.dataset.id; history = []; $('reading').innerHTML = '';
+    $('empty').hidden = false;
     drawProfiles(); updateWho(); loadChart();
   });
 }
@@ -649,6 +649,7 @@ async function ask(){
   turn.className = 'turn';
   turn.innerHTML = `<div class="q">${question.replace(/</g,'&lt;')}</div><div class="a thinking">Reading the chart</div>`;
   $('reading').appendChild(turn);
+  $('threadnote').hidden = true;
   turn.scrollIntoView({behavior:'smooth', block:'start'});
 
   try{
@@ -707,7 +708,12 @@ document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
 });
 $('send').onclick = ask;
 $('q').addEventListener('keydown', e => {
-  if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ask();
+  // Enter sends, Shift+Enter makes a newline. Ctrl/Cmd+Enter still works for
+  // anyone who learned it that way.
+  if(e.key === 'Enter' && !e.shiftKey){
+    e.preventDefault();
+    ask();
+  }
 });
 
 // ---------- theme ----------
@@ -994,41 +1000,56 @@ function whenText(iso){
     {year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
 }
 
+// How many past exchanges are replayed to the astrologer on a reload.
+// The whole thread is shown, but sending all of it would grow every request
+// without bound — an answer runs to a couple of thousand tokens, so ten old
+// turns would cost more than the question does. Three keeps the conversation
+// coherent at a predictable price.
+const REPLAYED_TURNS = 3;
+
 async function loadHistory(){
-  if(!pid){ $('historyBox').hidden = true; return; }
+  $('threadnote').hidden = true;
+  if(!pid){ $('reading').innerHTML = ''; return; }
   try{
     const r = await fetch(`/api/readings/${pid}`);
     const rows = await r.json();
     if(rows.error) throw new Error(rows.error);
 
-    if(!rows.length){
-      $('hcount').textContent = '';
-      $('historyList').innerHTML =
-        '<p class="hempty">Nothing asked about this chart yet.</p>';
-      $('historyBox').hidden = false;
-      return;
-    }
+    // Newest first from the API; a conversation reads oldest first.
+    rows.reverse();
 
-    $('hcount').textContent = rows.length +
-      (rows.length === 1 ? ' reading, newest first' : ' readings, newest first');
-
-    $('historyList').innerHTML = rows.map((row, i) => {
-      // personas is the array /api/personas returns, keyed by `key` inside
-      // each entry — not an object, so it has to be searched.
+    $('reading').innerHTML = rows.map(row => {
       const p = personas.find(x => x.key === row.persona);
       const who = p ? p.name : (row.persona || '');
       const meta = [whenText(row.created_at), who, row.model]
         .filter(Boolean).map(esc).join('  ·  ');
-      // The most recent one starts open; the rest stay folded so a long
-      // history does not bury the chart below it.
-      return '<details class="hitem"' + (i === 0 ? ' open' : '') + '>' +
-        '<summary><div class="hq">' + esc(row.question) + '</div>' +
-        '<div class="hmeta">' + meta + '</div></summary>' +
-        '<div class="hbody a">' + md(row.answer) + '</div></details>';
+      return '<div class="turn">' +
+        '<div class="turnwhen">' + meta + '</div>' +
+        '<div class="q">' + esc(row.question) + '</div>' +
+        '<div class="a">' + md(row.answer) + '</div></div>';
     }).join('');
-    $('historyBox').hidden = false;
+
+    // Seed what the astrologer is told, so a follow-up like "and the second
+    // one?" still makes sense after a reload. The chart block is never part
+    // of this — it is rebuilt fresh on every call, as it always was.
+    history = [];
+    rows.slice(-REPLAYED_TURNS).forEach(row => {
+      history.push({role: 'user', content: row.question});
+      history.push({role: 'assistant', content: row.answer});
+    });
+
+    if(rows.length){
+      $('empty').hidden = true;
+      $('threadnote').textContent = rows.length +
+        (rows.length === 1 ? ' earlier reading' : ' earlier readings') +
+        ' on this chart' +
+        (rows.length > REPLAYED_TURNS
+          ? ' — the last ' + REPLAYED_TURNS + ' are carried into the conversation'
+          : '');
+      $('threadnote').hidden = false;
+    }
   }catch(e){
-    $('historyBox').hidden = true;
+    $('reading').innerHTML = '';
   }
 }
 
