@@ -222,6 +222,23 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .hint{font-size:12px;color:var(--muted);margin-top:6px}
 .hint.warn{color:var(--sindoor)}
 
+/* ---------- past readings ---------- */
+.history{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
+.history[hidden]{display:none}
+.history h2{font-family:var(--serif);font-weight:400;font-size:21px;margin:0 0 4px}
+.history .hsub{font-size:12px;color:var(--muted);margin:0 0 14px}
+.hitem{border:1px solid var(--line);border-radius:4px;background:var(--panel);margin-bottom:10px}
+.hitem summary{
+  cursor:pointer;list-style:none;padding:12px 14px;display:block;
+}
+.hitem summary::-webkit-details-marker{display:none}
+.hitem summary:hover{background:var(--panel-2)}
+.hitem[open] summary{border-bottom:1px solid var(--line)}
+.hq{font-family:var(--serif);font-size:16px;color:var(--text);line-height:1.4}
+.hmeta{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:5px}
+.hbody{padding:14px}
+.hempty{font-size:13px;color:var(--muted);font-style:italic}
+
 /* ---------- chart panel ---------- */
 .chartpanel{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
 .chartpanel[hidden]{display:none}
@@ -343,6 +360,12 @@ details.raw pre{
         question above. Every answer is worked out fresh from the birth chart, the
         current planetary period and today's transits — nothing is remembered or reused.
       </div>
+
+      <section class="history" id="historyBox" hidden>
+        <h2>Past readings</h2>
+        <p class="hsub" id="hcount"></p>
+        <div id="historyList"></div>
+      </section>
 
       <section class="chartpanel" id="chartBox" hidden>
         <div class="chead">
@@ -536,6 +559,7 @@ async function loadChart(){
     renderCharts(d.raw);
     $('chartBox').hidden = false;
   }catch(e){ $('chartBox').hidden = true; }
+  loadHistory();
 }
 
 function showErr(msg){
@@ -706,6 +730,55 @@ $('f_search').onclick = findPlace;
 $('f_place').addEventListener('keydown', e => {
   if(e.key === 'Enter'){ e.preventDefault(); findPlace(); }
 });
+
+// ---------- past readings ----------
+// Read back from the readings table rather than from the in-page conversation,
+// so a reading survives a reload, a different browser, and switching charts.
+function whenText(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d)) return String(iso).slice(0, 16).replace('T', ' ');
+  return d.toLocaleString(undefined,
+    {year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+
+async function loadHistory(){
+  if(!pid){ $('historyBox').hidden = true; return; }
+  try{
+    const r = await fetch(`/api/readings/${pid}`);
+    const rows = await r.json();
+    if(rows.error) throw new Error(rows.error);
+
+    if(!rows.length){
+      $('hcount').textContent = '';
+      $('historyList').innerHTML =
+        '<p class="hempty">Nothing asked about this chart yet.</p>';
+      $('historyBox').hidden = false;
+      return;
+    }
+
+    $('hcount').textContent = rows.length +
+      (rows.length === 1 ? ' reading, newest first' : ' readings, newest first');
+
+    $('historyList').innerHTML = rows.map((row, i) => {
+      // personas is the array /api/personas returns, keyed by `key` inside
+      // each entry — not an object, so it has to be searched.
+      const p = personas.find(x => x.key === row.persona);
+      const who = p ? p.name : (row.persona || '');
+      const meta = [whenText(row.created_at), who, row.model]
+        .filter(Boolean).map(esc).join('  ·  ');
+      // The most recent one starts open; the rest stay folded so a long
+      // history does not bury the chart below it.
+      return '<details class="hitem"' + (i === 0 ? ' open' : '') + '>' +
+        '<summary><div class="hq">' + esc(row.question) + '</div>' +
+        '<div class="hmeta">' + meta + '</div></summary>' +
+        '<div class="hbody a">' + md(row.answer) + '</div></details>';
+    }).join('');
+    $('historyBox').hidden = false;
+  }catch(e){
+    $('historyBox').hidden = true;
+  }
+}
 
 // ---------- chart drawing ----------
 // Two conventions, both in use in India and not interchangeable:
