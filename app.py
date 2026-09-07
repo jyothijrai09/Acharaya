@@ -397,20 +397,36 @@ def api_horoscope(pid, kind):
     if denied:
         return denied
 
-    key = horoscopes.period_key(kind)
+    # The period boundary is the querent's local one, not UTC. Without the
+    # offset, someone at UTC-4 would be charged for a fresh daily reading
+    # every evening after 8pm, when their key rolled over but their day
+    # had not.
+    try:
+        tz_offset = float(request.args.get("tz_offset") or 0)
+    except (TypeError, ValueError):
+        tz_offset = 0.0
+
+    key = horoscopes.period_key(kind, tz_offset=tz_offset)
     refresh = request.args.get("refresh") in ("1", "true", "yes")
 
     if refresh:
         delete_horoscope(pid, kind, key)
     else:
         cached = get_horoscope(pid, kind, key)
-        if cached:
+        # A row is only returned when it is keyed to the period we are in,
+        # so a hit is current by construction. Stated rather than assumed,
+        # and empty rows are never served - one was written before the
+        # empty-answer guard existed.
+        if cached and (cached.get("content") or "").strip() \
+                and horoscopes.is_current(kind, key, tz_offset):
+            expiry = horoscopes.expires_at(kind, tz_offset)
             return jsonify({
                 "kind": kind, "period_key": key, "cached": True,
                 "label": horoscopes.describe(kind, key),
                 "content": cached["content"],
                 "model": cached["model"],
                 "created_at": str(cached["created_at"]),
+                "expires_at": expiry.isoformat() + "Z" if expiry else None,
             })
 
     # A miss costs money, so it is subject to the same budget as a
@@ -451,12 +467,14 @@ def api_horoscope(pid, kind):
         saved = save_horoscope(pid, kind, key, answer, persona=persona,
                                provider=PROVIDER, model=used_model,
                                cost_usd=cost)
+        expiry = horoscopes.expires_at(kind, tz_offset)
         return jsonify({
             "kind": kind, "period_key": key, "cached": False,
             "label": horoscopes.describe(kind, key),
             "content": (saved or {}).get("content", answer),
             "model": used_model, "cost_usd": cost,
             "created_at": str((saved or {}).get("created_at", "")),
+            "expires_at": expiry.isoformat() + "Z" if expiry else None,
         })
     except ProviderError as e:
         return jsonify({"error": str(e)}), 502

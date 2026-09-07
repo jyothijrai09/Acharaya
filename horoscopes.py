@@ -14,7 +14,7 @@ which is four times the cost for no more information.
 exactly when the period does.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 KINDS = ("daily", "weekly", "yearly", "life")
 
@@ -73,25 +73,67 @@ SCOPES = {
 }
 
 
-def period_key(kind, when=None):
+def period_key(kind, when=None, tz_offset=0.0):
     """
     The cache key for a kind of horoscope: what changes when the period does.
 
     'life' is constant, so a life reading is written once and never expires.
     The rest change with the day, the ISO week, or the year.
+
+    tz_offset is hours east of UTC, and it matters more than it looks. Keyed
+    on UTC, someone at UTC-4 crosses into tomorrow's key at 8pm their time:
+    every evening they would be charged for a second daily reading, and on
+    New Year's Eve they would buy next year's horoscope three hours early.
+    A day is the querent's day.
     """
     when = when or datetime.utcnow()
     if kind == "life":
         return "life"
+
+    local = when + timedelta(hours=tz_offset or 0.0)
     if kind == "daily":
-        return when.strftime("%Y-%m-%d")
+        return local.strftime("%Y-%m-%d")
     if kind == "weekly":
         # ISO week, so the key changes on Monday rather than mid-week.
-        iso = when.isocalendar()
+        iso = local.isocalendar()
         return "%d-W%02d" % (iso[0], iso[1])
     if kind == "yearly":
-        return when.strftime("%Y")
+        return local.strftime("%Y")
     raise ValueError("unknown horoscope kind: %r" % kind)
+
+
+def expires_at(kind, tz_offset=0.0, when=None):
+    """When the current period ends, as a UTC datetime, or None for life.
+
+    Reported to the interface so it can say how long a cached horoscope
+    stays free instead of leaving that a guess.
+    """
+    if kind == "life":
+        return None
+    when = when or datetime.utcnow()
+    local = when + timedelta(hours=tz_offset or 0.0)
+
+    if kind == "daily":
+        end = datetime(local.year, local.month, local.day) + timedelta(days=1)
+    elif kind == "weekly":
+        start = datetime(local.year, local.month, local.day) - timedelta(
+            days=local.weekday())
+        end = start + timedelta(days=7)
+    else:   # yearly
+        end = datetime(local.year + 1, 1, 1)
+
+    return end - timedelta(hours=tz_offset or 0.0)
+
+
+def is_current(kind, key, tz_offset=0.0, when=None):
+    """Whether a stored horoscope still covers the period we are in.
+
+    The lookup is already keyed on the period, so a hit is by definition
+    current. This exists so the answer can be stated rather than assumed -
+    and so a row written under the old UTC keying can be recognised as
+    belonging to a different period than the one it claims.
+    """
+    return key == period_key(kind, when, tz_offset)
 
 
 def build_question(kind):

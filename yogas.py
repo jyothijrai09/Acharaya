@@ -24,6 +24,8 @@ the dasha and antardasha of the planets that form it, so each result carries
 the windows from the chart's own Vimshottari timeline.
 """
 
+from datetime import date, datetime, timedelta
+
 SIGNS = ["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
          "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"]
 
@@ -49,6 +51,57 @@ MAHAPURUSHA = {
 }
 
 SHADOW = {"Rahu", "Ketu"}
+
+# Vimshottari order and lengths, repeated here rather than imported so this
+# module stays free of the engine and can be reasoned about on its own.
+DASHA_ORDER = ["Ketu", "Venus", "Sun", "Moon", "Mars",
+               "Rahu", "Jupiter", "Saturn", "Mercury"]
+DASHA_YEARS = {"Ketu": 7, "Venus": 20, "Sun": 6, "Moon": 10, "Mars": 7,
+               "Rahu": 18, "Jupiter": 16, "Saturn": 19, "Mercury": 17}
+TOTAL_YEARS = 120
+
+# How far ahead to subdivide antardashas into pratyantardashas. Every
+# antardasha holds nine of them, so subdividing the whole 120-year cycle would
+# produce 729 windows per yoga — true, and useless to read. Two years covers
+# what anyone is actually planning around.
+PRATYANTAR_HORIZON_DAYS = 730
+
+
+def _pratyantardashas(ad_lord, start_iso, end_iso):
+    """Subdivide one antardasha into its nine pratyantardashas.
+
+    Same proportional rule as every level of Vimshottari: the sub-period runs
+    from the lord of the period it sits in, and each share of the whole is that
+    planet's years out of 120. These are short — weeks, not years — which is
+    exactly why they are worth having: a yoga whose lords are nowhere near the
+    running mahadasha still gets brief pulses inside it.
+    """
+    try:
+        start = date.fromisoformat(start_iso)
+        end = date.fromisoformat(end_iso)
+    except (TypeError, ValueError):
+        return []
+
+    total_days = (end - start).days
+    if total_days <= 0:
+        return []
+
+    out = []
+    cursor = start
+    begin = DASHA_ORDER.index(ad_lord) if ad_lord in DASHA_ORDER else 0
+    for i in range(9):
+        lord = DASHA_ORDER[(begin + i) % 9]
+        span = total_days * DASHA_YEARS[lord] / TOTAL_YEARS
+        finish = cursor + timedelta(days=span)
+        out.append({
+            "lord": lord,
+            "start": cursor.isoformat(),
+            "end": min(finish, end).isoformat(),
+        })
+        cursor = finish
+        if cursor >= end:
+            break
+    return out
 
 
 def _house_of(planets, name):
@@ -214,7 +267,7 @@ def _find(planets, lagna_sign):
     return found
 
 
-def _activation(yoga, timeline, current):
+def _activation(yoga, timeline, current, today=None):
     """When this yoga's planets rule, from the chart's own dasha timeline.
 
     A yoga is not read as acting continuously; it delivers during the periods
@@ -222,6 +275,7 @@ def _activation(yoga, timeline, current):
     a yoga and the yoga mattering this year.
     """
     involved = set(yoga["planets"])
+    today = today or datetime.utcnow().date().isoformat()
     windows = []
     for md in timeline or []:
         md_is = md["mahadasha"] in involved
@@ -235,10 +289,72 @@ def _activation(yoga, timeline, current):
                     "running": (md["mahadasha"] == (current or {}).get("mahadasha")
                                 and ad["antardasha"] == (current or {}).get("antardasha")),
                 })
-    # The strongest windows are those where mahadasha AND antardasha both
-    # belong to the yoga; they are worth surfacing first.
-    windows.sort(key=lambda w: (not w["both"], w["start"]))
-    return windows[:6]
+    for w in windows:
+        w["past"] = w["end"] < today
+        w["future"] = w["start"] > today
+
+    # What a querent wants from a yoga is when it NEXT acts. Sorting by
+    # strength alone buried the coming windows under ones that closed years
+    # ago, which is the wrong answer to the only question being asked.
+    # Running first, then future in order, then past most-recent first.
+    def order(w):
+        if w["running"]:
+            return (0, w["start"])
+        if w["future"]:
+            return (1, w["start"])
+        return (2, [-ord(c) for c in w["start"]])
+
+    windows.sort(key=order)
+
+    # Keep every future window - a yoga may not act again for decades and
+    # that is worth seeing - but only a couple of past ones for context.
+    upcoming = [w for w in windows if not w["past"]]
+    past = [w for w in windows if w["past"]][:2]
+    return (upcoming + past)[:10]
+
+
+def _pulses(yoga, timeline, current, today=None, horizon_days=None):
+    """Short pratyantardasha windows for this yoga, in the near future.
+
+    A yoga whose planets do not rule the running mahadasha or antardasha
+    looks dormant for years at the top two levels. It is not: the third
+    level cycles all nine planets inside every antardasha, so its lords come
+    round for weeks at a time. Those pulses are brief and real, and they are
+    the answer to 'when does this act NEXT' when the big windows are distant.
+
+    Bounded to the near future on purpose - subdividing the whole cycle gives
+    729 windows per yoga, which is true and unreadable.
+    """
+    involved = set(yoga["planets"])
+    today = today or datetime.utcnow().date().isoformat()
+    horizon = (date.fromisoformat(today)
+               + timedelta(days=horizon_days or PRATYANTAR_HORIZON_DAYS)).isoformat()
+
+    out = []
+    for md in timeline or []:
+        if md["end"] < today or md["start"] > horizon:
+            continue
+        for ad in md.get("antardashas", []):
+            if ad["end"] < today or ad["start"] > horizon:
+                continue
+            for pd in _pratyantardashas(ad["antardasha"], ad["start"], ad["end"]):
+                if pd["lord"] not in involved:
+                    continue
+                if pd["end"] < today or pd["start"] > horizon:
+                    continue
+                out.append({
+                    "mahadasha": md["mahadasha"],
+                    "antardasha": ad["antardasha"],
+                    "pratyantardasha": pd["lord"],
+                    "start": pd["start"], "end": pd["end"],
+                    "running": pd["start"] <= today <= pd["end"],
+                    # All three levels belonging to the yoga is the strongest
+                    # thing this level can say.
+                    "all_three": (md["mahadasha"] in involved
+                                  and ad["antardasha"] in involved),
+                })
+    out.sort(key=lambda w: (not w["running"], w["start"]))
+    return out[:8]
 
 
 def build(planets, lagna_sign, timeline=None, current_dasha=None):
@@ -248,10 +364,14 @@ def build(planets, lagna_sign, timeline=None, current_dasha=None):
     found = _find(planets, lagna_sign)
     for y in found:
         y["activation"] = _activation(y, timeline, current_dasha)
+        y["pulses"] = _pulses(y, timeline, current_dasha)
     return {
         "yogas": found,
         "forms_checked": "conjunction and parivartana (exchange) only; "
                          "mutual aspect is not tested",
+        "levels_scanned": "all nine mahadashas of the 120-year cycle at "
+                          "mahadasha and antardasha level, plus "
+                          "pratyantardasha for the next two years",
     }
 
 
@@ -280,11 +400,25 @@ def to_prompt_lines(block):
         lines.append(f"  {y['what']}")
         if y.get("caveat"):
             lines.append(f"  CAVEAT: {y['caveat']}")
+        if y.get("pulses"):
+            lines.append("  Short pratyantardasha pulses in the next two years:")
+            for w in y["pulses"]:
+                mark = "  <- RUNNING NOW" if w["running"] else (
+                    "  (all three levels belong to the yoga)" if w["all_three"] else "")
+                lines.append(
+                    f"    {w['mahadasha']}/{w['antardasha']}/"
+                    f"{w['pratyantardasha']}: {w['start']} to {w['end']}{mark}")
         if y.get("activation"):
-            lines.append("  Activates during:")
+            lines.append("  Activates during (coming windows first):")
             for w in y["activation"]:
-                mark = "  <- running now" if w["running"] else (
-                    "  (both periods belong to the yoga)" if w["both"] else "")
+                if w["running"]:
+                    mark = "  <- RUNNING NOW"
+                elif w.get("past"):
+                    mark = "  (already passed)"
+                elif w["both"]:
+                    mark = "  (upcoming; both periods belong to the yoga)"
+                else:
+                    mark = "  (upcoming)"
                 lines.append(f"    {w['mahadasha']}/{w['antardasha']}: "
                              f"{w['start']} to {w['end']}{mark}")
     return lines

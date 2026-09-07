@@ -42,6 +42,19 @@ MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "12000"))
 # keeps the quality while leaving headroom. Raise it if you move off Hobby.
 LLM_EFFORT = os.environ.get("LLM_EFFORT", "medium")
 
+# Milliseconds a single provider call may take. This exists because of the
+# platform, not the model: Vercel's Hobby plan kills a function at 60
+# seconds, and google-genai retries a 503 internally with backoff. A busy
+# Gemini therefore burned the entire budget retrying and the request died
+# as a 504 - a bare error page, not JSON, which the browser could not even
+# parse into a message. Failing at 40s leaves room to return a real one.
+PROVIDER_TIMEOUT_MS = int(os.environ.get("PROVIDER_TIMEOUT_MS", "40000"))
+
+# Attempts INCLUDING the first. Two is deliberate: one retry catches a
+# blip, more just spends the function's remaining life on a provider that
+# has already said it is overloaded.
+PROVIDER_ATTEMPTS = int(os.environ.get("PROVIDER_ATTEMPTS", "2"))
+
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5",
     "gemini": "gemini-3.8-flash",
@@ -157,6 +170,12 @@ def _readable_provider_failure(exc, model):
             f"to try again shortly. This is on their side, not your chart. "
             f"Wait a moment and ask again, or pick a different model."
         )
+    if "timeout" in lowered or "timed out" in lowered:
+        return ProviderError(
+            f"{model} took too long and the request was cut off. A life or "
+            f"yearly reading is the longest of these; try a faster model, or "
+            f"ask again when the provider is less busy."
+        )
     if "429" in text or "rate limit" in lowered or "quota" in lowered:
         return ProviderError(
             f"{model} has hit its rate limit or quota. Free tiers cap how "
@@ -203,14 +222,29 @@ LAST_USAGE = {}
 def _gemini_client(key):
     if ("gemini", key) not in _clients:
         from google import genai
-        _clients[("gemini", key)] = genai.Client(api_key=key)
+        from google.genai import types as gtypes
+        _clients[("gemini", key)] = genai.Client(
+            api_key=key,
+            http_options=gtypes.HttpOptions(
+                timeout=PROVIDER_TIMEOUT_MS,
+                retry_options=gtypes.HttpRetryOptions(
+                    attempts=PROVIDER_ATTEMPTS,
+                    max_delay=5.0,
+                ),
+            ),
+        )
     return _clients[("gemini", key)]
 
 
 def _anthropic_client(key):
     if ("anthropic", key) not in _clients:
         from anthropic import Anthropic
-        _clients[("anthropic", key)] = Anthropic(api_key=key)
+        # Seconds here, unlike google-genai's milliseconds.
+        _clients[("anthropic", key)] = Anthropic(
+            api_key=key,
+            timeout=PROVIDER_TIMEOUT_MS / 1000.0,
+            max_retries=max(0, PROVIDER_ATTEMPTS - 1),
+        )
     return _clients[("anthropic", key)]
 
 
