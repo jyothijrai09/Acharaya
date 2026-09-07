@@ -23,7 +23,11 @@ import os
 import sqlite3
 from datetime import datetime
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+# DATABASE_URL is the name to set by hand. POSTGRES_URL is accepted as a
+# fallback because Vercel's native Supabase integration injects that name
+# automatically — without it, wiring the two together through the Vercel
+# marketplace would silently fall back to SQLite and lose every saved chart.
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
 USE_POSTGRES = bool(DATABASE_URL)
 
 # Local SQLite path. Defaults beside this file rather than an absolute path,
