@@ -27,7 +27,20 @@ PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
 # 2000 tokens, which is what ask_astrologer() used before the provider split
 # (the Flask endpoint already used 4000 — the two had drifted apart). One
 # setting for both paths now.
-MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "4000"))
+# 4000 was far too low, and the way it failed was expensive and silent.
+# Claude Sonnet 5 and Opus 5 run adaptive thinking by DEFAULT, and thinking
+# is billed and counted against max_tokens. A life reading at 4000 spent
+# the entire budget thinking and returned zero text blocks: a 54-second
+# call, seven cents, and an empty reading saved to the cache.
+#
+# The budget now has room for the thinking AND the answer.
+MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "12000"))
+
+# How hard the model thinks before answering. Thinking improves a reading
+# of this kind, but it costs time, and Vercel's Hobby plan kills a function
+# at 60 seconds - a life reading at default effort already took 54. 'medium'
+# keeps the quality while leaving headroom. Raise it if you move off Hobby.
+LLM_EFFORT = os.environ.get("LLM_EFFORT", "medium")
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5",
@@ -231,19 +244,32 @@ def _generate_anthropic(system, messages, max_tokens, model=None):
     # the ephemeris every call and changes as transits move, so it would
     # never produce a hit and would only pay the write premium. It is sent
     # after this breakpoint, which is exactly where volatile content belongs.
+    request = {
+        "model": model or current_model(),
+        "max_tokens": max_tokens,
+        "system": [{
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        }],
+        "messages": messages,
+    }
+    if LLM_EFFORT:
+        request["output_config"] = {"effort": LLM_EFFORT}
+
     try:
-        response = client.messages.create(
-            model=model or current_model(),
-            max_tokens=max_tokens,
-            system=[{
-                "type": "text",
-                "text": system,
-                "cache_control": {"type": "ephemeral"},
-            }],
-            messages=messages,
-        )
+        response = client.messages.create(**request)
     except Exception as e:
-        raise _readable_provider_failure(e, model or current_model())
+        # An unsupported effort value should not cost the reading; retry
+        # without it rather than failing the whole request.
+        if "output_config" in request and "effort" in str(e).lower():
+            request.pop("output_config")
+            try:
+                response = client.messages.create(**request)
+            except Exception as e2:
+                raise _readable_provider_failure(e2, model or current_model())
+        else:
+            raise _readable_provider_failure(e, model or current_model())
 
     # Worth watching: if cache_read_input_tokens stays at zero across
     # repeated questions, something is changing the prompt between calls and
@@ -258,7 +284,22 @@ def _generate_anthropic(system, messages, max_tokens, model=None):
             'cache_write': getattr(usage, 'cache_creation_input_tokens', None),
             'cache_read': getattr(usage, 'cache_read_input_tokens', None),
         })
-    return "".join(b.text for b in response.content if b.type == "text")
+    text = "".join(getattr(b, "text", "") for b in response.content
+                   if getattr(b, "type", None) == "text")
+
+    # An answer made entirely of thinking blocks is empty text, and saving
+    # that produced a blank reading that had already been paid for. Fail
+    # loudly instead: the caller must not cache nothing.
+    if not text.strip():
+        stop = getattr(response, "stop_reason", None)
+        raise ProviderError(
+            f"{model or current_model()} returned no text"
+            + (f" (stop_reason: {stop})" if stop else "")
+            + ". This usually means the whole token budget went on "
+              "thinking. Raise LLM_MAX_TOKENS, lower LLM_EFFORT, or ask "
+              "a shorter question."
+        )
+    return text
 
 
 # ------------------------------------------------------------------ gemini

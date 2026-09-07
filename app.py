@@ -338,6 +338,10 @@ def api_ask():
             messages=messages,
             model=d.get("model"),
         )
+        if not (answer or '').strip():
+            return jsonify({
+                "error": "The astrologer returned an empty reading. Nothing was saved. Try again, or pick a different model."
+            }), 502
 
         # Recorded after the answer exists, so a failed call leaves no
         # row. A storage failure must not lose a reading the querent is
@@ -435,6 +439,15 @@ def api_horoscope(pid, kind):
         )
         used_model = model or current_model()
         cost = cost_of(used_model, LAST_USAGE)
+
+        # A blank horoscope must never reach the cache. Cached, it would
+        # be served free forever and look like a broken page rather than
+        # a failed call.
+        if not (answer or '').strip():
+            return jsonify({
+                "error": "The astrologer returned an empty reading. Nothing was saved. Try again, or pick a different model."
+            }), 502
+
         saved = save_horoscope(pid, kind, key, answer, persona=persona,
                                provider=PROVIDER, model=used_model,
                                cost_usd=cost)
