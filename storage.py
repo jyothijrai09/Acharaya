@@ -30,6 +30,23 @@ from datetime import datetime
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
 USE_POSTGRES = bool(DATABASE_URL)
 
+# On a serverless host the SQLite fallback cannot work: the deployment
+# directory is read-only, so sqlite3 fails with "unable to open database file"
+# during import — a message that gives no hint about the actual cause. Fail
+# here instead, while there is still room to say what is wrong.
+#
+# Refusing to start is deliberate. Writing to /tmp would let the app boot and
+# appear to save birth charts, then lose them when the instance is recycled,
+# which is far worse than not starting at all.
+if os.environ.get("VERCEL") and not USE_POSTGRES:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Running on Vercel without it would fall back "
+        "to SQLite on a read-only, ephemeral filesystem and lose every saved "
+        "chart. Set DATABASE_URL in Vercel to the Supabase transaction pooler "
+        "connection string (port 6543), or connect the Supabase integration, "
+        "which provides POSTGRES_URL."
+    )
+
 # Local SQLite path. Defaults beside this file rather than an absolute path,
 # so it works on any machine and any operating system.
 DB_PATH = os.environ.get(
