@@ -2,6 +2,7 @@
 Astrology Engine v2
 - Multi-profile storage (SQLite)
 - Full natal chart (Vedic + KP planet sub-lords)
+- D9 Navamsha divisional chart (Parashari reckoning)
 - KP cuspal sub-lords (house cusps, Placidus)
 - Vimshottari Dasha/Antardasha timeline
 - Live transits (current planetary positions vs natal)
@@ -35,6 +36,26 @@ NAKSHATRAS = [
 ]
 SIGNS = ["Aries","Taurus","Gemini","Cancer","Leo","Virgo",
          "Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"]
+
+SIGN_LORDS = {
+    "Aries":"Mars", "Taurus":"Venus", "Gemini":"Mercury", "Cancer":"Moon",
+    "Leo":"Sun", "Virgo":"Mercury", "Libra":"Venus", "Scorpio":"Mars",
+    "Sagittarius":"Jupiter", "Capricorn":"Saturn", "Aquarius":"Saturn", "Pisces":"Jupiter"
+}
+
+# Exaltation signs. Rahu and Ketu are deliberately absent - the tradition does
+# not agree on their exaltation, and guessing would put a fabricated dignity
+# in front of the model.
+EXALTATION = {
+    "Sun":"Aries", "Moon":"Taurus", "Mars":"Capricorn", "Mercury":"Virgo",
+    "Jupiter":"Cancer", "Venus":"Pisces", "Saturn":"Libra"
+}
+DEBILITATION = {p: SIGNS[(SIGNS.index(s) + 6) % 12] for p, s in EXALTATION.items()}
+OWN_SIGNS = {
+    "Sun":{"Leo"}, "Moon":{"Cancer"}, "Mars":{"Aries","Scorpio"},
+    "Mercury":{"Gemini","Virgo"}, "Jupiter":{"Sagittarius","Pisces"},
+    "Venus":{"Taurus","Libra"}, "Saturn":{"Capricorn","Aquarius"}
+}
 DASHA_ORDER = ["Ketu","Venus","Sun","Moon","Mars","Rahu","Jupiter","Saturn","Mercury"]
 DASHA_YEARS = {"Ketu":7,"Venus":20,"Sun":6,"Moon":10,"Mars":7,"Rahu":18,"Jupiter":16,"Saturn":19,"Mercury":17}
 TOTAL_YEARS = 120
@@ -196,6 +217,88 @@ def compute_planets(jd, asc_lon):
     }
     return data
 
+NAVAMSHA_SPAN = 30.0 / 9   # 3 degrees 20 minutes
+
+def get_navamsha_longitude(longitude):
+    """
+    Map a D1 longitude to its D9 (navamsha) longitude, Parashari reckoning.
+
+    Each 30 degree sign divides into nine parts of 3 deg 20 min, giving 108
+    navamshas around the zodiac. Numbering those parts continuously from
+    0 Aries and taking the result modulo 12 reproduces the classical rule
+    exactly, with no special-casing:
+
+        movable signs (Aries, Cancer, Libra, Capricorn) start from themselves
+        fixed signs   (Taurus, Leo, Scorpio, Aquarius)  start from the 9th sign
+        dual signs    (Gemini, Virgo, Sagittarius, Pisces) start from the 5th
+
+    The degree within the navamsha is expanded by 9 so it fills the 30 degree
+    D9 sign. Only the sign placement is doctrinally fixed; the expanded degree
+    is a display convention, and is deliberately not used for nakshatra or
+    lordship anywhere.
+
+    The arithmetic is deliberately written as (longitude * 9) // 30 rather than
+    the more obvious longitude // (30 / 9). The span 30/9 is not representable
+    in binary floating point - it rounds to just above 10/3 - so the obvious
+    form undershoots by one navamsha at every exact sign boundary, putting
+    0 deg Gemini in Virgo instead of Libra. Multiplying first keeps every sign
+    boundary exact. Do not "simplify" this back.
+    """
+    part = int(longitude * 9 // 30)                 # 0..107 around the zodiac
+    sign_idx = part % 12
+    offset = longitude * 9 - part * 30              # 0..30 within the D9 sign
+    return sign_idx * 30 + offset
+
+def get_dignity(planet, sign):
+    """Exaltation / debilitation / own sign for a planet in a given sign.
+    Returns None for the nodes and for neutral placements."""
+    if EXALTATION.get(planet) == sign:
+        return "exalted"
+    if DEBILITATION.get(planet) == sign:
+        return "debilitated"
+    if sign in OWN_SIGNS.get(planet, ()):
+        return "own sign"
+    return None
+
+def compute_navamsha(planets, asc_lon):
+    """
+    D9 navamsha chart: the divisional chart for marriage and partnership,
+    for dharma, and for the underlying strength of every planet.
+
+    Houses are whole-sign from the D9 lagna, matching the D1 convention.
+
+    A planet holding the same sign in D1 and D9 is vargottama - it repeats
+    across both charts and is read as markedly strengthened. That flag is the
+    single most useful thing D9 adds to a reading, so it is computed here
+    rather than left for the model to work out.
+    """
+    d9_asc_lon = get_navamsha_longitude(asc_lon)
+    d9_asc_sign = get_sign(d9_asc_lon)
+    d9_asc_idx = SIGNS.index(d9_asc_sign)
+
+    d9_planets = {}
+    for name, p in planets.items():
+        d9_lon = get_navamsha_longitude(p['longitude'])
+        d9_sign = get_sign(d9_lon)
+        d9_planets[name] = {
+            'sign': d9_sign,
+            'degree': round(d9_lon % 30, 2),
+            'house': (SIGNS.index(d9_sign) - d9_asc_idx) % 12 + 1,
+            'lord': SIGN_LORDS[d9_sign],
+            'dignity': get_dignity(name, d9_sign),
+            'vargottama': d9_sign == p['sign'],
+        }
+
+    return {
+        'lagna': {
+            'sign': d9_asc_sign,
+            'degree': round(d9_asc_lon % 30, 2),
+            'lord': SIGN_LORDS[d9_asc_sign],
+            'vargottama': d9_asc_sign == get_sign(asc_lon),
+        },
+        'planets': d9_planets,
+    }
+
 def compute_kp_cusps(jd, lat, lon):
     """KP uses Placidus house cusps (unlike whole-sign for planet houses).
     Returns cusp longitude + star/sub lord for each of 12 houses."""
@@ -290,6 +393,7 @@ def compute_natal_chart(profile):
     asc_nak, asc_pada = get_nakshatra_pada(asc_lon)
 
     planets = compute_planets(jd, asc_lon)
+    navamsha = compute_navamsha(planets, asc_lon)
     kp_cusps = compute_kp_cusps(jd, profile['lat'], profile['lon'])
     dasha_timeline = compute_dasha_timeline(planets['Moon']['longitude'], utc_dt, levels=2)
     current_md, current_ad = get_current_mahadasha_antardasha(dasha_timeline)
@@ -303,6 +407,7 @@ def compute_natal_chart(profile):
         'place': profile['place'],
         'lagna': {'sign': asc_sign, 'longitude': round(asc_lon,2), 'nakshatra': asc_nak, 'pada': asc_pada},
         'planets': planets,
+        'navamsha': navamsha,
         'kp_cusps': kp_cusps,
         'dasha_timeline': dasha_timeline,
         'current_dasha': {'mahadasha': current_md, 'antardasha': current_ad},
@@ -344,6 +449,22 @@ def context_to_prompt_text(context):
     lines.append("\n-- Planets (Vedic sign/house + KP star/sub lord) --")
     for name, p in n['planets'].items():
         lines.append(f"{name}: {p['sign']} {p['degree']}° | House {p['house']} | {p['nakshatra']} Pada {p['pada']} | Star Lord: {p['star_lord']} | Sub Lord: {p['sub_lord']}")
+    d9 = n['navamsha']
+    lines.append("\n-- D9 Navamsha (marriage, partnership, dharma, inner planetary strength) --")
+    lines.append(f"D9 Lagna: {d9['lagna']['sign']} {d9['lagna']['degree']}° | Lord: {d9['lagna']['lord']}"
+                 + (" | VARGOTTAMA" if d9['lagna']['vargottama'] else ""))
+    for name, p in d9['planets'].items():
+        extras = []
+        if p['dignity']:
+            extras.append(p['dignity'].upper())
+        if p['vargottama']:
+            extras.append("VARGOTTAMA")
+        suffix = (" | " + " | ".join(extras)) if extras else ""
+        lines.append(f"{name}: {p['sign']} {p['degree']}° | D9 House {p['house']} | Lord: {p['lord']}{suffix}")
+    vargottama = [k for k, v in d9['planets'].items() if v['vargottama']]
+    lines.append("Vargottama planets (same sign in D1 and D9, markedly strengthened): "
+                 + (", ".join(vargottama) if vargottama else "none"))
+
     lines.append("\n-- KP House Cusps (Placidus) --")
     for house, c in n['kp_cusps'].items():
         lines.append(f"Cusp {house}: {c['sign']} {c['longitude']%30:.2f}° | {c['nakshatra']} | Star Lord: {c['star_lord']} | Sub Lord: {c['sub_lord']}")

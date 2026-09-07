@@ -16,6 +16,7 @@ frontend.
 | `app.py` | Flask server. REST API plus serves the UI. |
 | `templates/index.html` | The interface. Single file, no build step, vanilla JS. |
 | `astro_profiles.db` | SQLite, created on first run. Saved birth charts. |
+| `test_navamsha.py` | D9 regression tests. Runs without an ephemeris — stubs swisseph. |
 
 ## Setup
 
@@ -36,6 +37,8 @@ Birth details (SQLite)
 astro_engine_v2.build_full_context(profile_id)
     ├── compute_natal_chart()    sidereal positions, whole-sign houses,
     │                            nakshatras, padas, KP star/sub lords
+    ├── compute_navamsha()       D9 signs, houses, lords, dignity,
+    │                            vargottama flags
     ├── compute_kp_cusps()       Placidus cusps + cusp sub-lords
     ├── compute_dasha_timeline() Vimshottari mahadasha + antardasha
     ├── compute_numerology()     Pythagorean, life path / mulank / destiny
@@ -68,8 +71,8 @@ If you refactor `ask_astrologer()` or `/api/ask`, keep this property. Do not
 1. Core reasoning (1–7): full-chart reasoning every turn, cite placements,
    cross-check systems, timing from dasha not feeling, no filler, stay inside the
    data, frame honestly.
-2. Response structure (A, B1–B7): summary paragraph first, then dasha (longest
-   section), natal, KP, transits, numerology, timing, verdict.
+2. Response structure (A, B1–B8): summary paragraph first, then dasha (longest
+   section), natal, navamsha, KP, transits, numerology, timing, verdict.
 3. Language (8–11): no idioms, explain mechanism not just verdict, define terms
    in line, plain sentences.
 4. Authority and care (12–15): speak from depth, never leave a hard placement
@@ -105,6 +108,7 @@ Saturn mahadasha   20 May 2013 – 20 May 2032
 Mars antardasha    21 Nov 2025 – 31 Dec 2026
 Rahu antardasha    31 Dec 2026 – 6 Nov 2029
 Numerology         life path 9, mulank 2, destiny 8, soul urge 7, personality 1
+D9 Lagna           Aquarius — vargottama (same sign in D1 and D9)
 ```
 
 Verified against a Parashara's Light 9.0 report. Dasha dates carry roughly two
@@ -118,15 +122,21 @@ days' drift from that report — acceptable, but do not let it grow.
   genuinely different house systems used side by side; that is correct, not a bug.
 - Time zone offsets are stored as the offset **at the time of birth**, not the
   modern offset for that location.
+- Navamsha is computed as `(longitude * 9) // 30`, never `longitude // (30/9)`.
+  30/9 is not representable in binary floating point and the second form is
+  wrong on every exact sign boundary — it puts 0° Gemini in Virgo instead of
+  Libra. `test_navamsha.py` guards this; run it after touching D9.
 
 ## Known gaps / next steps
 
 - **Nadi astrology** — deliberately excluded. It matches a chart against physical
   palm-leaf records, so it needs a digitised leaf archive rather than ephemeris
   maths. Different build entirely.
-- **Divisional charts beyond D1** — D9 (navamsha), D10 (dashamsha) and D6 are not
-  yet computed. The personas will correctly say the data is missing if asked.
-  This is the most valuable next addition.
+- **Divisional charts beyond D9** — D9 (navamsha) is computed and wired into
+  the personas as section B3. D10 (dashamsha, career) and D6 are still not
+  computed; the personas will correctly say so if asked. D10 is the most
+  valuable next addition, and `compute_navamsha()` is the pattern to copy —
+  a D10 is the same arithmetic with a different divisor and starting rule.
 - **Voice mode** — speech-to-text and text-to-speech, per the original AstroSage
   reference. Not started.
 - **Billing / wallet** — per-minute metering. Not started.

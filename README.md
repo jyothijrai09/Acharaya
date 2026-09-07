@@ -7,11 +7,12 @@ four AI astrologer personas.
 
 | File | What it does |
 |---|---|
-| `astro_engine_v2.py` | Chart maths. Sidereal positions, whole-sign houses, nakshatras and padas, KP star and sub lords, KP Placidus cusps, Vimshottari dasha timeline, numerology, live transits, SQLite profile storage. |
+| `astro_engine_v2.py` | Chart maths. Sidereal positions, whole-sign houses, nakshatras and padas, the D9 navamsha chart, KP star and sub lords, KP Placidus cusps, Vimshottari dasha timeline, numerology, live transits, SQLite profile storage. |
 | `astro_personas.py` | The four personas and the 22 rules that govern how they speak. Builds the system prompt and the fresh chart block for each API call. |
 | `app.py` | Flask server. REST API plus the web interface. |
 | `templates/index.html` | The interface. |
 | `astro_profiles.db` | Created on first run. Your saved charts. |
+| `test_navamsha.py` | D9 regression tests. `python test_navamsha.py` — no ephemeris needed. |
 
 ## Setup
 
