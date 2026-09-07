@@ -139,6 +139,25 @@ header.top{
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
 
+/* ---------- where you are now ---------- */
+.nowbox{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
+.nowbox[hidden]{display:none}
+.nowbox h2{font-family:var(--serif);font-weight:400;font-size:21px;margin:0 0 4px}
+.nowctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.nowctl input{
+  flex:1;min-width:180px;background:var(--ink);border:1px solid var(--line);
+  color:var(--text);border-radius:3px;padding:7px 10px;
+  font-family:var(--mono);font-size:12.5px;
+}
+.nowstatus{font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.5}
+.nowhora{
+  font-family:var(--serif);font-size:16px;line-height:1.6;margin:14px 0;
+  padding:11px 14px;border:1px solid var(--line);border-left:3px solid var(--brass);
+  border-radius:3px;background:var(--panel-2);
+}
+.hnow td{background:var(--panel-2);font-weight:500}
+.hsuit{color:var(--muted);font-size:11.5px}
+
 /* ---------- model picker ---------- */
 .modelrow{
   display:flex;align-items:center;gap:8px;flex-wrap:wrap;
@@ -488,6 +507,17 @@ details.raw pre{
         </div>
       </div>
 
+      <section class="nowbox" id="nowbox" hidden>
+        <h2>Where you are now</h2>
+        <div class="nowctl">
+          <input id="nowplace" placeholder="City you are in right now">
+          <button type="button" class="searchbtn" id="nowfind">Find</button>
+          <button type="button" class="searchbtn" id="nowgeo">Use my location</button>
+        </div>
+        <p class="nowstatus" id="nowstatus"></p>
+        <div id="nowbody"></div>
+      </section>
+
       <section class="chartpanel" id="chartBox" hidden>
         <div class="chead">
           <h2>The chart</h2>
@@ -740,8 +770,10 @@ async function ask(){
     const r = await fetch('/api/ask', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({profile_id: pid, question, persona, history,
-                            model: chosenModel})
+      body: JSON.stringify(Object.assign(
+        {profile_id: pid, question, persona, history, model: chosenModel},
+        here ? {lat: here.lat, lon: here.lon,
+                tz_offset: here.tz_offset, place: here.place} : {}))
     });
     let d;
     try{
@@ -1161,6 +1193,132 @@ async function loadHistory(){
     }
   }catch(e){
     $('reading').innerHTML = '';
+  }
+}
+
+// ---------- where you are now ----------
+// The natal chart belongs to a birthplace; the sign rising this minute and the
+// hora in force belong to wherever you are standing today. The two are usually
+// nowhere near each other, so this is asked for separately and never guessed
+// from the birth details — a hora for a place you are not in looks like an
+// answer while being none.
+let here = null;
+try{ here = JSON.parse(localStorage.getItem('jyotish-here') || 'null'); }catch(e){}
+
+function saveHere(h){
+  here = h;
+  try{ localStorage.setItem('jyotish-here', JSON.stringify(h)); }catch(e){}
+}
+
+function hereParams(){
+  if(!here) return '';
+  const p = new URLSearchParams({lat: here.lat, lon: here.lon,
+                                 tz_offset: here.tz_offset ?? 0});
+  if(here.place) p.set('place', here.place);
+  return p.toString();
+}
+
+async function useMyLocation(){
+  const status = $('nowstatus');
+  if(!navigator.geolocation){
+    status.textContent = 'This browser will not share a location. Search for a place instead.';
+    return;
+  }
+  status.textContent = 'Asking your browser for your location…';
+  navigator.geolocation.getCurrentPosition(async pos => {
+    // The browser gives coordinates but no time zone, and the offset matters
+    // for showing local clock times. The device's own offset is the right
+    // answer whenever the person is actually where they say they are.
+    saveHere({
+      lat: +pos.coords.latitude.toFixed(4),
+      lon: +pos.coords.longitude.toFixed(4),
+      tz_offset: -new Date().getTimezoneOffset() / 60,
+      place: null
+    });
+    loadNow();
+  }, err => {
+    status.textContent = 'Your browser refused the location (' +
+      esc(err.message) + '). Search for a place instead.';
+  }, {timeout: 10000, maximumAge: 600000});
+}
+
+async function findHere(){
+  const q = $('nowplace').value.trim();
+  const status = $('nowstatus');
+  if(!q){ status.textContent = 'Type where you are.'; return; }
+  status.textContent = 'Looking that up…';
+  try{
+    const rows = await fetch('/api/geocode?q=' + encodeURIComponent(q)).then(r => r.json());
+    if(rows.error) throw new Error(rows.error);
+    if(!rows.length){ status.textContent = 'No place found by that name.'; return; }
+    const p = rows[0];
+    saveHere({lat: p.lat, lon: p.lon,
+              tz_offset: p.tz_offset ?? 0, place: p.name});
+    loadNow();
+  }catch(e){
+    status.textContent = 'Lookup failed: ' + e.message;
+  }
+}
+
+function horaRow(x){
+  return '<tr class="' + (x.current ? 'hnow' : '') + '">' +
+    '<td class="num">' + x.start_local + '–' + x.end_local + '</td>' +
+    '<td>' + esc(x.ruler) +
+      (x.current ? '<span class="tag">now</span>' : '') + '</td>' +
+    '<td class="num">' + (x.is_day ? 'day' : 'night') + '</td>' +
+    '<td class="hsuit">' + esc(x.suited_to) + '</td></tr>';
+}
+
+async function loadNow(){
+  const box = $('nowbox'), status = $('nowstatus');
+  if(!here){
+    $('nowbody').innerHTML = '';
+    status.textContent = 'Set where you are to see what is rising now and which hora is running.';
+    box.hidden = false;
+    return;
+  }
+
+  status.textContent = 'Reading the sky over ' +
+    (here.place || (here.lat + ', ' + here.lon)) + '…';
+  try{
+    const d = await fetch('/api/now?' + hereParams()).then(r => r.json());
+    if(d.error) throw new Error(d.error);
+
+    const a = d.ascendant;
+    const h = d.hora || {};
+    let html = '<div class="pairs">' +
+      '<div><span>Rising now</span>' + esc(a.sign) + ' ' + a.degree + '°</div>' +
+      '<div><span>Lord</span>' + esc(a.lord) + '</div>' +
+      '<div><span>Nakshatra</span>' + esc(a.nakshatra) + ' pada ' + a.pada + '</div>' +
+      '<div><span>Sub lord</span>' + esc(a.sub_lord) + '</div></div>';
+
+    if(h.available){
+      html += '<div class="pairs" style="margin-top:12px">' +
+        '<div><span>Day</span>' + esc(h.weekday) + ', ruled by ' + esc(h.day_lord) + '</div>' +
+        '<div><span>Sunrise</span>' + esc(h.sunrise_local) + '</div>' +
+        '<div><span>Sunset</span>' + esc(h.sunset_local) + '</div>' +
+        '<div><span>Hora length</span>' + h.day_hora_minutes + ' min day, ' +
+          h.night_hora_minutes + ' min night</div></div>';
+      if(h.current){
+        html += '<p class="nowhora">The <b>' + esc(h.current.ruler) + '</b> hora is running, ' +
+          esc(h.current.start_local) + ' to ' + esc(h.current.end_local) +
+          ' — suited to ' + esc(h.current.suited_to) + '.</p>';
+      }
+      html += '<div class="scroll"><table class="dtable"><thead><tr>' +
+        '<th>Local time</th><th>Ruler</th><th></th><th>Suited to</th>' +
+        '</tr></thead><tbody>' + h.horas.map(horaRow).join('') +
+        '</tbody></table></div>';
+    }else if(h.reason){
+      html += '<p class="nowhora">' + esc(h.reason) + '</p>';
+    }
+
+    $('nowbody').innerHTML = html;
+    status.textContent = (d.place || (here.lat + ', ' + here.lon)) +
+      ' — horas are unequal, and depend on sunrise here.';
+    box.hidden = false;
+  }catch(e){
+    $('nowbody').innerHTML = '';
+    status.textContent = 'Could not read the sky there: ' + e.message;
   }
 }
 
@@ -1602,8 +1760,14 @@ async function boot(selectId){
   // Nothing is fetched until the account is known to be approved, so a
   // pending visitor cannot make the server do work on their behalf.
   if(await initAuth()){
+    $('nowfind').onclick = findHere;
+    $('nowgeo').onclick = useMyLocation;
+    $('nowplace').addEventListener('keydown', e => {
+      if(e.key === 'Enter'){ e.preventDefault(); findHere(); }
+    });
     await boot();
     loadModels();
+    loadNow();
     loadAdmin();
   }
 })();

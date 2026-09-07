@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 # Profile storage lives in storage.py, which speaks SQLite locally and
 # PostgreSQL (Supabase) when DATABASE_URL is set. Re-exported here so that
 # existing `from astro_engine_v2 import ...` imports keep working.
+import hora
 import vargas
 from storage import (  # noqa: F401
     init_db, save_profile, list_profiles, get_profile, delete_profile, DB_PATH,
@@ -458,9 +459,45 @@ def compute_natal_chart(profile):
         'natal_asc_lon': asc_lon,
     }
 
+def compute_here_now(lat, lon, tz_offset=0.0):
+    """
+    What the sky is doing at a place right now: the rising sign there, and the
+    planetary hour running.
+
+    Separate from the natal chart on purpose. A chart is cast for where someone
+    was born; the ascendant rising this minute and the hora now in force depend
+    on where they are standing today, and the two are usually nowhere near each
+    other. Passing the birthplace here would answer a question nobody asked.
+    """
+    now_utc = datetime.utcnow()
+    jd = julian_day(now_utc)
+
+    houses = swe.houses_ex(jd, lat, lon, b'W', flags=swe.FLG_SIDEREAL)
+    asc_lon = houses[1][0]
+    asc_nak, asc_pada = get_nakshatra_pada(asc_lon)
+    star_lord, sub_lord = get_kp_lords(asc_lon)
+
+    return {
+        'as_of_utc': now_utc.isoformat(),
+        'lat': lat,
+        'lon': lon,
+        'tz_offset': tz_offset,
+        'ascendant': {
+            'sign': get_sign(asc_lon),
+            'degree': round(asc_lon % 30, 2),
+            'lord': SIGN_LORDS[get_sign(asc_lon)],
+            'nakshatra': asc_nak,
+            'pada': asc_pada,
+            'star_lord': star_lord,
+            'sub_lord': sub_lord,
+        },
+        'hora': hora.build_horas(now_utc, lat, lon, tz_offset),
+    }
+
+
 # ---------------- FULL CONTEXT FOR AI ----------------
 
-def build_full_context(profile_id):
+def build_full_context(profile_id, here=None):
     """
     Assembles the COMPLETE data packet the AI must reason over every time
     it responds for this profile: full natal chart, KP cusps, dasha timeline,
@@ -474,13 +511,27 @@ def build_full_context(profile_id):
     natal = compute_natal_chart(profile)
     transit_time, transits = compute_transits(natal['natal_asc_lon'])
 
-    return {
+    context = {
         'natal_chart': natal,
         'live_transits': {
             'as_of_utc': transit_time.isoformat(),
             'positions': transits
         }
     }
+
+    # Only when the querent has told us where they are. Guessing, or
+    # falling back to the birthplace, would put a rising sign and a hora
+    # in front of the model for a place the person is not standing in.
+    if here and here.get('lat') is not None and here.get('lon') is not None:
+        try:
+            context['here_now'] = compute_here_now(
+                float(here['lat']), float(here['lon']),
+                float(here.get('tz_offset') or 0))
+            context['here_now']['place'] = here.get('place')
+        except Exception:
+            pass   # a bad coordinate must not cost the whole reading
+
+    return context
 
 def context_to_prompt_text(context):
     """Renders the full context as structured text to inject into the AI system/user prompt."""
@@ -553,6 +604,34 @@ def context_to_prompt_text(context):
     lines.append(f"Life Path Number: {num['life_path_number']} | Birth Day Number (Mulank): {num['birth_day_number']}")
     if 'destiny_number' in num:
         lines.append(f"Destiny/Expression Number: {num['destiny_number']} | Soul Urge: {num['soul_urge_number']} | Personality: {num['personality_number']}")
+    hn = context.get('here_now')
+    if hn:
+        where = hn.get('place') or f"{hn['lat']:.2f}, {hn['lon']:.2f}"
+        a = hn['ascendant']
+        lines.append(f"\n-- Where the querent is RIGHT NOW: {where} --")
+        lines.append("This is their CURRENT location, not their birthplace. Use it "
+                     "for what is rising now and for the hora; the natal chart above "
+                     "still belongs to the birth place and time.")
+        lines.append(f"Rising there now: {a['sign']} {a['degree']}° | Lord: {a['lord']} "
+                     f"| {a['nakshatra']} pada {a['pada']} | Sub Lord: {a['sub_lord']}")
+        h = hn.get('hora') or {}
+        if h.get('available'):
+            cur = h.get('current') or {}
+            lines.append(f"Weekday: {h['weekday']}, ruled by {h['day_lord']}. "
+                         f"Sunrise {h['sunrise_local']}, sunset {h['sunset_local']} local.")
+            if cur:
+                lines.append(f"Hora running now: {cur['ruler']} "
+                             f"({cur['start_local']}–{cur['end_local']} local), "
+                             f"suited to {cur['suited_to']}.")
+                upcoming = [x for x in h['horas']
+                            if x['start_utc'] > cur['start_utc']][:4]
+                if upcoming:
+                    lines.append("Next horas: " + ", ".join(
+                        f"{x['ruler']} {x['start_local']}–{x['end_local']}"
+                        for x in upcoming))
+        elif h.get('reason'):
+            lines.append(f"Hora unavailable: {h['reason']}")
+
     lines.append("\n-- Live Transits (as of now) --")
     for name, p in context['live_transits']['positions'].items():
         lines.append(f"{name}: {p['sign']} {p['degree']}° | Transit House (from natal Lagna): {p['house']} | {p['nakshatra']}")

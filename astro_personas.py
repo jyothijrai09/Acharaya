@@ -500,12 +500,12 @@ def build_system_prompt(persona_key):
 {SHARED_RULES}"""
 
 
-def build_chart_block(profile_id):
+def build_chart_block(profile_id, here=None):
     """
     Rebuilt fresh on EVERY call. Transits change by the hour; dasha changes
     by the day. This is never cached and never summarized.
     """
-    context = build_full_context(profile_id)
+    context = build_full_context(profile_id, here=here)
     return f"""<computed_chart_data>
 This data was computed just now by the ephemeris engine. It is authoritative.
 Work through it before answering. Do not answer from memory of earlier turns.

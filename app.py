@@ -24,7 +24,7 @@ from functools import wraps
 
 from astro_engine_v2 import (
     init_db, save_profile, list_profiles, get_profile, delete_profile,
-    build_full_context, context_to_prompt_text,
+    build_full_context, context_to_prompt_text, compute_here_now,
 )
 from storage import (
     save_reading, list_readings, get_user, upsert_user, list_users,
@@ -216,7 +216,7 @@ def api_chart(pid):
     if denied:
         return denied
     try:
-        ctx = build_full_context(pid)
+        ctx = build_full_context(pid, here=_here_from_request())
         return jsonify({
             "raw": ctx,
             "text": context_to_prompt_text(ctx),
@@ -270,7 +270,8 @@ def api_ask():
         messages = list(history)
         messages.append({
             "role": "user",
-            "content": f"{build_chart_block(pid)}\n\nQuestion: {question}",
+            "content": f"{build_chart_block(pid, here=_here_from_request())}"
+                       f"\n\nQuestion: {question}",
         })
 
         answer = generate(
@@ -341,6 +342,44 @@ def api_geocode():
         return jsonify(geocode.search(query, birth=birth))
     except geocode.GeocodeError as e:
         return jsonify({"error": str(e)}), 502
+
+
+def _here_from_request():
+    """The querent's CURRENT location, if the browser sent one.
+
+    Never defaults to the birthplace. A rising sign or a hora for a
+    place someone is not standing in is worse than none at all, because
+    it looks like an answer.
+    """
+    args = request.args if request.method == "GET" else (request.get_json(silent=True) or {})
+    lat, lon = args.get("lat"), args.get("lon")
+    if lat in (None, "") or lon in (None, ""):
+        return None
+    try:
+        return {"lat": float(lat), "lon": float(lon),
+                "tz_offset": float(args.get("tz_offset") or 0),
+                "place": args.get("place")}
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/api/now")
+@require_user()
+def api_now():
+    """The rising sign and the planetary hour where the querent is now.
+
+    Independent of any chart: it answers about a place and a moment, not
+    about a person."""
+    here = _here_from_request()
+    if not here:
+        return jsonify({"error": "A latitude and longitude are needed to say what is rising and which hora is running."}), 400
+    try:
+        result = compute_here_now(here["lat"], here["lon"], here["tz_offset"])
+        result["place"] = here.get("place")
+        return jsonify(result)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.get("/api/models")
