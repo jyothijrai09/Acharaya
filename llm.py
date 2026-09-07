@@ -42,18 +42,22 @@ MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "12000"))
 # keeps the quality while leaving headroom. Raise it if you move off Hobby.
 LLM_EFFORT = os.environ.get("LLM_EFFORT", "medium")
 
-# Milliseconds a single provider call may take. This exists because of the
-# platform, not the model: Vercel's Hobby plan kills a function at 60
-# seconds, and google-genai retries a 503 internally with backoff. A busy
-# Gemini therefore burned the entire budget retrying and the request died
-# as a 504 - a bare error page, not JSON, which the browser could not even
-# parse into a message. Failing at 40s leaves room to return a real one.
-PROVIDER_TIMEOUT_MS = int(os.environ.get("PROVIDER_TIMEOUT_MS", "40000"))
+# The whole budget for one reading, in milliseconds, and it is set by the
+# platform rather than the model: Vercel's Hobby plan kills a function at 60
+# seconds and returns a bare error page - not JSON, so the browser cannot
+# even parse it into a message.
+#
+# Both SDKs apply their timeout PER ATTEMPT, not to the call as a whole. A
+# 40-second timeout with one retry is therefore an 80-second worst case,
+# which is how a first attempt at this still produced 504s. The budget only
+# holds if there is exactly one attempt.
+PROVIDER_TIMEOUT_MS = int(os.environ.get("PROVIDER_TIMEOUT_MS", "50000"))
 
-# Attempts INCLUDING the first. Two is deliberate: one retry catches a
-# blip, more just spends the function's remaining life on a provider that
-# has already said it is overloaded.
-PROVIDER_ATTEMPTS = int(os.environ.get("PROVIDER_ATTEMPTS", "2"))
+# Attempts INCLUDING the first, so 1 means no retry. A retry cannot fit
+# beside a reading that legitimately takes most of a minute; the honest
+# trade is one attempt that finishes over two that cannot. Raise it only
+# alongside a lower timeout, or on a plan without the 60-second ceiling.
+PROVIDER_ATTEMPTS = int(os.environ.get("PROVIDER_ATTEMPTS", "1"))
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5",

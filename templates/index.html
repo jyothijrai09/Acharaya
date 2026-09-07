@@ -382,6 +382,15 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .hint{font-size:12px;color:var(--muted);margin-top:6px}
 .hint.warn{color:var(--sindoor)}
 
+/* ---------- the auto life-reading option ---------- */
+.optrow{
+  display:flex;align-items:flex-start;gap:9px;margin:16px 0 4px;
+  padding-top:14px;border-top:1px solid var(--line);
+}
+.optrow input{margin-top:2px;accent-color:var(--brass)}
+.optrow label{font-size:13px;line-height:1.5;color:var(--text)}
+.optrow .why{display:block;font-size:11.5px;color:var(--muted);margin-top:3px}
+
 /* ---------- sign-in gate ---------- */
 .gate{
   min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
@@ -727,6 +736,15 @@ details.raw pre{
     </div>
   </div>
 
+  <div class="optrow">
+    <input type="checkbox" id="f_autolife" checked>
+    <label for="f_autolife">Write the life reading now
+      <span class="why">It is written once and kept, so it costs the same whenever
+        it happens — but it does cost. The chart is saved either way, and this
+        runs after, so nothing is held up if it fails.</span>
+    </label>
+  </div>
+
   <div id="dlgErr"></div>
   <div class="dlgbar">
     <button class="cancel" id="dlgCancel">Cancel</button>
@@ -974,6 +992,15 @@ $('dlgSave').onclick = async () => {
     $('dlgErr').innerHTML = '';
     $('dlg').close();
     await boot(d.id);
+
+    // Fired from the browser AFTER the chart is saved, never inside the save.
+    // A life reading takes most of a minute and Vercel kills a function at
+    // sixty seconds: generating it server-side during the save would risk
+    // failing the save itself over a reading that is optional.
+    if($('f_autolife').checked){
+      showTab('panelLife');
+      loadHoroscope('life', false);
+    }
   }catch(e){
     $('dlgErr').innerHTML = `<div class="err">Could not save: ${esc(e.message)}</div>`;
   }finally{
