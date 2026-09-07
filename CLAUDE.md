@@ -23,9 +23,6 @@ frontend.
 | `api/index.py` | Vercel entry point. Re-exports the Flask app; holds no logic. |
 | `vercel.json` | Routes every path to the Flask app. |
 | `astro_profiles.db` | Local SQLite, created on first run. Saved birth charts. |
-| `test_navamsha.py` | D9 regression tests. Runs without an ephemeris — stubs swisseph. |
-| `test_llm.py` | Provider layer tests. Runs with no API key and neither SDK installed. |
-| `test_dignity.py` | Dignity, retrogression and combustion tests. No ephemeris needed. |
 
 ## Setup
 
@@ -47,10 +44,6 @@ driver or network is needed. Set `DATABASE_URL` to a Supabase connection
 string to use Postgres instead — the same code path serves both.
 
 `GET /api/model` reports which provider and model are actually answering.
-
-```bash
-python3 test_navamsha.py && python3 test_llm.py && python3 test_dignity.py
-```
 
 ## Architecture
 
@@ -246,7 +239,7 @@ reachable on Vercel, where the variable is always set.
 - Navamsha is computed as `(longitude * 9) // 30`, never `longitude // (30/9)`.
   30/9 is not representable in binary floating point and the second form is
   wrong on every exact sign boundary — it puts 0° Gemini in Virgo instead of
-  Libra. `test_navamsha.py` guards this; run it after touching D9.
+  Libra.
 
 ## Known gaps / next steps
 

@@ -161,7 +161,9 @@ class Varga:
         # 23.333333333333332 * 9 / 30 comes out as 6.999999999999999. Without
         # the nudge that floors to part 6 instead of 7, putting the planet one
         # varga sign back — a real disagreement with the navamsha the engine
-        # computes from absolute longitude, which test_vargas.py catches.
+        # computes from absolute longitude. D9 here and
+        # get_navamsha_longitude() there must agree at every degree; if they
+        # ever diverge, this epsilon is the first thing to look at.
         #
         # 1e-9 of a part is about a hundred-thousandth of an arcsecond for D9,
         # far below any precision an ephemeris offers, so it can only ever

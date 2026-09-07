@@ -14,7 +14,6 @@ four AI astrologer personas.
 | `storage.py` | Profile storage — SQLite locally, Postgres when `DATABASE_URL` is set. |
 | `supabase_schema.sql` | Run once in the Supabase SQL editor to create the table. |
 | `astro_profiles.db` | Created on first run locally. Your saved charts. |
-| `test_navamsha.py` | D9 regression tests. `python test_navamsha.py` — no ephemeris needed. |
 
 ## Setup
 

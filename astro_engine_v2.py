@@ -273,8 +273,9 @@ def get_navamsha_longitude(longitude):
     #
     # 1e-9 of a navamsha is well under a thousandth of an arcsecond, far below
     # any precision the ephemeris offers, so it can only ever repair this
-    # rounding and never shift a genuine placement. test_vargas.py cross-checks
-    # this against the varga table, which is how the discrepancy surfaced.
+    # rounding and never shift a genuine placement. The discrepancy surfaced
+    # by cross-checking this against the independent varga table in
+    # vargas.py, which is still the way to re-check it.
     part = int(longitude * 9 / 30 + 1e-9)           # 0..107 around the zodiac
     sign_idx = part % 12
 
