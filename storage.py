@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS readings (
     answer TEXT NOT NULL,
     provider TEXT,
     model TEXT,
+    cost_usd REAL DEFAULT 0,
     created_at TEXT
 )
 """
@@ -135,6 +136,7 @@ CREATE TABLE IF NOT EXISTS readings (
     answer TEXT NOT NULL,
     provider TEXT,
     model TEXT,
+    cost_usd DOUBLE PRECISION DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 )
 """
@@ -187,6 +189,9 @@ def init_db():
                     cur.execute("ALTER TABLE profiles ADD COLUMN full_birth_name TEXT")
                 if "user_id" not in cols:
                     cur.execute("ALTER TABLE profiles ADD COLUMN user_id TEXT")
+                rcols = [r[1] for r in cur.execute("PRAGMA table_info(readings)")]
+                if rcols and "cost_usd" not in rcols:
+                    cur.execute("ALTER TABLE readings ADD COLUMN cost_usd REAL DEFAULT 0")
     finally:
         conn.close()
 
@@ -366,7 +371,7 @@ def save_profile(name, year, month, day, hour, minute, tz_offset,
 
 
 def save_reading(profile_id, question, answer, persona=None,
-                 provider=None, model=None):
+                 provider=None, model=None, cost_usd=0.0):
     """Record one question and the answer given to it.
 
     Kept deliberately separate from the conversation history the model is
@@ -381,18 +386,20 @@ def save_reading(profile_id, question, answer, persona=None,
             if USE_POSTGRES:
                 cur.execute(_q("""
                     INSERT INTO readings
-                        (profile_id, persona, question, answer, provider, model)
-                    VALUES (?,?,?,?,?,?)
+                        (profile_id, persona, question, answer, provider, model, cost_usd)
+                    VALUES (?,?,?,?,?,?,?)
                     RETURNING id
-                """), (profile_id, persona, question, answer, provider, model))
+                """), (profile_id, persona, question, answer, provider, model,
+                       cost_usd or 0.0))
                 return cur.fetchone()[0]
 
             cur.execute("""
                 INSERT INTO readings
-                    (profile_id, persona, question, answer, provider, model, created_at)
-                VALUES (?,?,?,?,?,?,?)
+                    (profile_id, persona, question, answer, provider, model,
+                     cost_usd, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
             """, (profile_id, persona, question, answer, provider, model,
-                  datetime.utcnow().isoformat()))
+                  cost_usd or 0.0, datetime.utcnow().isoformat()))
             return cur.lastrowid
     finally:
         conn.close()
@@ -432,6 +439,23 @@ def count_readings_today(user_id):
         conn.close()
 
 
+def spend_today():
+    """Total dollars spent across the whole app since midnight UTC.
+
+    Global rather than per-account on purpose: this exists to cap the BILL, and
+    the bill does not care which account ran it up.
+    """
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT COALESCE(SUM(cost_usd), 0) FROM readings "
+                       "WHERE created_at >= ?"), (_start_of_today(),))
+        row = cur.fetchone()
+        return float(row[0]) if row and row[0] is not None else 0.0
+    finally:
+        conn.close()
+
+
 def usage_summary():
     """Per account: charts held, readings today, readings ever.
 
@@ -449,11 +473,14 @@ def usage_summary():
                      WHERE p2.user_id = u.id AND r.created_at >= ?),
                    (SELECT COUNT(*) FROM readings r2
                       JOIN profiles p3 ON r2.profile_id = p3.id
-                     WHERE p3.user_id = u.id)
+                     WHERE p3.user_id = u.id),
+                   (SELECT COALESCE(SUM(r3.cost_usd), 0) FROM readings r3
+                      JOIN profiles p4 ON r3.profile_id = p4.id
+                     WHERE p4.user_id = u.id AND r3.created_at >= ?)
               FROM app_users u
              ORDER BY u.created_at DESC
-        """), (_start_of_today(),))
-        cols = ["id", "email", "status", "charts", "today", "total"]
+        """), (_start_of_today(), _start_of_today()))
+        cols = ["id", "email", "status", "charts", "today", "total", "spent_today"]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
         conn.close()

@@ -29,13 +29,13 @@ from astro_engine_v2 import (
 from storage import (
     save_reading, list_readings, get_user, upsert_user, list_users,
     set_user_status, can_access_profile, adopt_orphan_profiles,
-    count_readings_today, usage_summary,
+    count_readings_today, usage_summary, spend_today,
 )
 import auth
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
 from llm import (
     generate, current_model, ProviderError, PROVIDER, available_choices,
-    LAST_USAGE,
+    LAST_USAGE, cost_of,
 )
 import geocode
 
@@ -52,6 +52,12 @@ REPLAYED_TURNS = int(os.environ.get('REPLAYED_TURNS', '3'))
 # a quota at Google both fire after the request has already been made and
 # paid for. Set to 0 to remove the cap.
 DAILY_READING_LIMIT = int(os.environ.get('DAILY_READING_LIMIT', '25'))
+
+# Dollars the whole app may spend per day, across every account. Global
+# rather than per-account because this caps the BILL, and the bill does
+# not care who ran it up. Readings on a free tier cost nothing and never
+# consume it. Set to 0 to remove the cap.
+DAILY_BUDGET_USD = float(os.environ.get('DAILY_BUDGET_USD', '2.00'))
 
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 init_db()
@@ -166,6 +172,8 @@ def api_admin_usage():
     """Who is spending the API budget, before the bill says so."""
     return jsonify({
         "daily_limit": DAILY_READING_LIMIT,
+        "daily_budget": DAILY_BUDGET_USD,
+        "spent_today": round(spend_today(), 4),
         "replayed_turns": REPLAYED_TURNS,
         "provider": PROVIDER,
         "model": current_model(),
@@ -291,6 +299,19 @@ def api_ask():
     # Checked before the model is called, not after: the point is to stop
     # the spend, and an answer that is discarded has already been paid for.
     # Admins are exempt, so a cap can never lock out the person who sets it.
+    # The budget binds admins too. A spending cap that the person most
+    # likely to be testing can ignore is not a spending cap.
+    if DAILY_BUDGET_USD:
+        spent = spend_today()
+        if spent >= DAILY_BUDGET_USD:
+            return jsonify({
+                "error": f"Today's budget of ${DAILY_BUDGET_USD:.2f} is spent "
+                         f"(${spent:.2f} so far). It resets at midnight UTC. "
+                         f"Readings on Gemini's free tier still work.",
+                "budget": DAILY_BUDGET_USD,
+                "spent": round(spent, 4),
+            }), 429
+
     if DAILY_READING_LIMIT and not g.is_admin:
         used = count_readings_today(g.user_id)
         if used >= DAILY_READING_LIMIT:
@@ -319,10 +340,15 @@ def api_ask():
         # Recorded after the answer exists, so a failed call leaves no
         # row. A storage failure must not lose a reading the querent is
         # already reading, so it is logged rather than raised.
+        # Priced from the tokens the provider actually reported, not
+        # estimated: an estimate that drifts low would let the budget be
+        # passed without ever showing it.
+        used_model = d.get("model") or current_model()
+        call_cost = cost_of(used_model, LAST_USAGE)
         try:
             save_reading(pid, question, answer, persona=persona,
-                         provider=PROVIDER,
-                         model=d.get("model") or current_model())
+                         provider=PROVIDER, model=used_model,
+                         cost_usd=call_cost)
         except Exception:
             traceback.print_exc()
 
@@ -334,7 +360,10 @@ def api_ask():
         if DAILY_READING_LIMIT and not g.is_admin:
             remaining = max(0, DAILY_READING_LIMIT - count_readings_today(g.user_id))
         return jsonify({"answer": answer, "history": new_history,
-                        "remaining_today": remaining})
+                        "remaining_today": remaining,
+                        "cost_usd": call_cost,
+                        "budget_left": (round(max(0.0, DAILY_BUDGET_USD - spend_today()), 4)
+                                        if DAILY_BUDGET_USD else None)})
 
     except ProviderError as e:
         traceback.print_exc()

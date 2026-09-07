@@ -169,6 +169,11 @@ header.top{
 }
 .adminpage h3:first-child{margin-top:0}
 .limitnote .ok{color:var(--strong)}
+.bar{
+  display:inline-block;width:110px;height:6px;border-radius:3px;
+  background:var(--line);vertical-align:middle;overflow:hidden;margin:0 2px;
+}
+.bar span{display:block;height:100%;background:var(--brass)}
 .limitnote .warn2{color:var(--weak)}
 .limitnote{
   font-size:12.5px;color:var(--muted);line-height:1.6;margin:0 0 4px;
@@ -617,7 +622,7 @@ details.raw pre{
         <div class="scroll">
           <table class="dtable"><thead><tr>
             <th>Account</th><th>Status</th><th>Charts</th>
-            <th>Readings today</th><th>Readings total</th>
+            <th>Readings today</th><th>Readings total</th><th>Spent today</th>
           </tr></thead><tbody id="usageList"></tbody></table>
         </div>
       </div>
@@ -856,9 +861,23 @@ async function ask(){
         + 'Ask again, or try a different model.');
     }
     history = d.history || history;
+    const bits = [];
     if(typeof d.remaining_today === 'number'){
-      $('threadnote').textContent = d.remaining_today +
-        (d.remaining_today === 1 ? ' reading left today' : ' readings left today');
+      bits.push(d.remaining_today +
+        (d.remaining_today === 1 ? ' reading left today' : ' readings left today'));
+    }
+    if(typeof d.cost_usd === 'number'){
+      // A free-tier reading should say so rather than showing $0.000, which
+      // reads like a failure to measure.
+      bits.push(d.cost_usd > 0
+        ? 'that reading cost $' + d.cost_usd.toFixed(3)
+        : 'free tier, no cost');
+    }
+    if(typeof d.budget_left === 'number'){
+      bits.push('$' + d.budget_left.toFixed(2) + ' of today\u2019s budget left');
+    }
+    if(bits.length){
+      $('threadnote').textContent = bits.join(' \u00b7 ');
       $('threadnote').hidden = false;
     }
     turn.querySelector('.a').className = 'a';
@@ -1168,15 +1187,26 @@ async function loadAdmin(){
     if(users.error) throw new Error(users.error);
 
     if(!usage.error){
+      const budget = usage.daily_budget || 0;
+      const spent = usage.spent_today || 0;
+      const pct = budget ? Math.min(100, Math.round(spent / budget * 100)) : 0;
       $('limitnote').innerHTML =
+        (budget
+          ? '<b>$' + spent.toFixed(2) + ' of $' + budget.toFixed(2) +
+            ' spent today</b> (' + pct + '%), resetting at midnight UTC. ' +
+            '<span class="bar"><span style="width:' + pct + '%"></span></span> ' +
+            'The budget binds everyone, administrators included \u2014 a cap the ' +
+            'person most likely to be testing can ignore is not a cap. ' +
+            'Readings on Gemini\u2019s free tier cost nothing and never touch it. '
+          : '<b>No daily budget is set.</b> ') +
         (usage.daily_limit
-          ? '<b>' + usage.daily_limit + ' readings per account per day</b>, resetting at midnight UTC. '
-          : '<b>No daily cap is set.</b> ') +
-        'Administrators are exempt. The astrologer is told the last <b>' +
-        usage.replayed_turns + '</b> exchanges of a conversation. Default model: <b>' +
-        esc(usage.model) + '</b> (' + esc(usage.provider) + '). ' +
-        'Change any of these with the DAILY_READING_LIMIT, REPLAYED_TURNS and ' +
-        'ASTRO_MODEL environment variables in Vercel.';
+          ? 'Each account may ask <b>' + usage.daily_limit +
+            '</b> readings a day; administrators are exempt from that one. '
+          : 'No per-account reading cap. ') +
+        'The astrologer is told the last <b>' + usage.replayed_turns +
+        '</b> exchanges. Default model: <b>' + esc(usage.model) + '</b>. ' +
+        'Change these with DAILY_BUDGET_USD, DAILY_READING_LIMIT, ' +
+        'REPLAYED_TURNS and ASTRO_MODEL in Vercel.';
 
       // Cache health. The system prompt is identical every call, so after the
       // first question the read should be large and the write zero. A read
@@ -1207,8 +1237,9 @@ async function loadAdmin(){
         '<td class="num">' + u.today +
           (usage.daily_limit && u.status !== 'admin'
             ? ' / ' + usage.daily_limit : '') + '</td>' +
-        '<td class="num">' + u.total + '</td></tr>').join('') ||
-        '<tr><td colspan="5" class="num">No accounts yet.</td></tr>';
+        '<td class="num">' + u.total + '</td>' +
+        '<td class="num">$' + (u.spent_today || 0).toFixed(3) + '</td></tr>').join('') ||
+        '<tr><td colspan="6" class="num">No accounts yet.</td></tr>';
     }
 
     users.sort((a, b) =>

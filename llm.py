@@ -19,7 +19,9 @@ first turn's chart and answer from a stale sky.
 
 import os
 
-PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+# Gemini's free tier is the default: a deployment with no billing set up
+# should still work, and should not be able to spend money by accident.
+PROVIDER = os.environ.get("LLM_PROVIDER", "gemini").lower()
 
 # An eight-section reading with a six-to-ten sentence summary does not fit in
 # 2000 tokens, which is what ask_astrologer() used before the provider split
@@ -47,6 +49,53 @@ CHOICES = [
 ]
 
 BY_ID = {c["id"]: c for c in CHOICES}
+
+# US dollars per million tokens, (input, output). Gemini's free tier bills
+# nothing, so a reading on it costs zero and never touches the budget.
+#
+# These are list prices and they change. They are used to enforce a spending
+# cap, so being slightly out matters: if a price rises and this table does not,
+# the cap under-counts and the real bill goes past it. Check it against the
+# provider's pricing page if the numbers ever look wrong.
+PRICES = {
+    "gemini-3.8-flash": (0.0, 0.0),
+    "gemini-2.5-flash": (0.0, 0.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-opus-5": (5.0, 25.0),
+}
+
+# Cached input is billed at a fraction of the normal rate: a write costs 1.25x
+# and a read 0.1x. Ignoring this would overstate the cost of every cached call
+# and make the budget bite far earlier than it should.
+CACHE_WRITE_MULTIPLIER = 1.25
+CACHE_READ_MULTIPLIER = 0.1
+
+
+def cost_of(model, usage):
+    """
+    What one call cost, in dollars, from the token counts the provider returned.
+
+    usage keys: input, output, cache_write, cache_read - any of which may be
+    absent. Returns 0.0 for a model with no price, which is the correct answer
+    for a free tier rather than a reason to refuse the reading.
+    """
+    if not usage:
+        return 0.0
+    price_in, price_out = PRICES.get(model, (0.0, 0.0))
+    if not price_in and not price_out:
+        return 0.0
+
+    def n(key):
+        value = usage.get(key)
+        return value if isinstance(value, (int, float)) else 0
+
+    billable_input = (
+        n("input")
+        + n("cache_write") * CACHE_WRITE_MULTIPLIER
+        + n("cache_read") * CACHE_READ_MULTIPLIER
+    )
+    return round(billable_input * price_in / 1_000_000
+                 + n("output") * price_out / 1_000_000, 6)
 
 
 def provider_available(provider):
@@ -201,6 +250,7 @@ def _generate_anthropic(system, messages, max_tokens, model=None):
     # the discount is being paid for without being collected.
     usage = getattr(response, 'usage', None)
     if usage is not None:
+        LAST_USAGE.clear()
         LAST_USAGE.update({
             'model': model or current_model(),
             'input': getattr(usage, 'input_tokens', None),
@@ -251,6 +301,16 @@ def _generate_gemini(system, messages, max_tokens, model=None):
         )
     except Exception as e:
         raise _readable_provider_failure(e, model or current_model())
+
+    meta = getattr(response, 'usage_metadata', None)
+    LAST_USAGE.clear()
+    LAST_USAGE.update({
+        'model': model or current_model(),
+        'input': getattr(meta, 'prompt_token_count', None) if meta else None,
+        'output': getattr(meta, 'candidates_token_count', None) if meta else None,
+        'cache_write': None,
+        'cache_read': getattr(meta, 'cached_content_token_count', None) if meta else None,
+    })
 
     text = response.text
     if not text:
