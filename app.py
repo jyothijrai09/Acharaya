@@ -21,14 +21,15 @@ import traceback
 from flask import Flask, request, jsonify, render_template
 
 from astro_engine_v2 import (
-    init_db, save_profile, list_profiles, get_profile,
-    build_full_context, context_to_prompt_text, DB_PATH,
+    init_db, save_profile, list_profiles, get_profile, delete_profile,
+    build_full_context, context_to_prompt_text,
 )
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
 
-import sqlite3
-
-app = Flask(__name__)
+# Absolute template path: on a serverless host the working directory is not
+# the repository root, so Flask's relative default fails to find them.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 init_db()
 
 
@@ -65,10 +66,7 @@ def api_create_profile():
 
 @app.delete("/api/profiles/<int:pid>")
 def api_delete_profile(pid):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM profiles WHERE id=?", (pid,))
-    conn.commit()
-    conn.close()
+    delete_profile(pid)
     return jsonify({"ok": True})
 
 

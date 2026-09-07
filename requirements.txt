@@ -1,3 +1,6 @@
 flask
 anthropic
 pyswisseph
+# PostgreSQL driver. Only imported when DATABASE_URL is set, so local
+# SQLite development works without it.
+psycopg[binary]

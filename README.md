@@ -11,13 +11,15 @@ four AI astrologer personas.
 | `astro_personas.py` | The four personas and the 22 rules that govern how they speak. Builds the system prompt and the fresh chart block for each API call. |
 | `app.py` | Flask server. REST API plus the web interface. |
 | `templates/index.html` | The interface. |
-| `astro_profiles.db` | Created on first run. Your saved charts. |
+| `storage.py` | Profile storage — SQLite locally, Postgres when `DATABASE_URL` is set. |
+| `supabase_schema.sql` | Run once in the Supabase SQL editor to create the table. |
+| `astro_profiles.db` | Created on first run locally. Your saved charts. |
 | `test_navamsha.py` | D9 regression tests. `python test_navamsha.py` — no ephemeris needed. |
 
 ## Setup
 
 ```bash
-pip install flask anthropic pyswisseph
+pip install -r requirements.txt
 export ANTHROPIC_API_KEY=sk-ant-...
 python3 app.py
 ```

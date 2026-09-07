@@ -15,15 +15,27 @@ frontend.
 | `astro_personas.py` | The four personas and the 22 rules governing how they speak. The rules are the product — treat them as carefully as code. |
 | `app.py` | Flask server. REST API plus serves the UI. |
 | `templates/index.html` | The interface. Single file, no build step, vanilla JS. |
-| `astro_profiles.db` | SQLite, created on first run. Saved birth charts. |
+| `storage.py` | Profile storage. SQLite locally, PostgreSQL when `DATABASE_URL` is set. The only module that talks to a database. |
+| `supabase_schema.sql` | Authoritative Postgres schema. Run once per Supabase project. |
+| `api/index.py` | Vercel entry point. Re-exports the Flask app; holds no logic. |
+| `vercel.json` | Routes every path to the Flask app. |
+| `astro_profiles.db` | Local SQLite, created on first run. Saved birth charts. |
 | `test_navamsha.py` | D9 regression tests. Runs without an ephemeris — stubs swisseph. |
 
 ## Setup
 
 ```bash
-pip install flask anthropic pyswisseph
+pip install -r requirements.txt
 export ANTHROPIC_API_KEY=sk-ant-...
 python3 app.py          # http://localhost:5000
+```
+
+With no `DATABASE_URL`, profiles go to a local SQLite file and no Postgres
+driver or network is needed. Set `DATABASE_URL` to a Supabase connection
+string to use Postgres instead — the same code path serves both.
+
+```bash
+python3 test_navamsha.py   # D9 regression tests, no ephemeris required
 ```
 
 Optional: `export ASTRO_MODEL=claude-sonnet-4-6` (default is Opus — better readings,
@@ -114,6 +126,37 @@ D9 Lagna           Aquarius — vargottama (same sign in D1 and D9)
 Verified against a Parashara's Light 9.0 report. Dasha dates carry roughly two
 days' drift from that report — acceptable, but do not let it grow.
 
+## Deployment
+
+Vercel (project `acharaya`) builds from `main`; Supabase project
+`AcharayaVedic` holds the profiles table.
+
+Environment variables required on Vercel:
+
+| Variable | Value |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic key |
+| `DATABASE_URL` | Supabase **transaction pooler** string, port 6543 |
+| `ASTRO_MODEL` | optional, defaults to Opus |
+
+Use the pooler on port 6543, not the direct connection on 5432. Serverless
+invocations open a connection per call, and direct connections exhaust
+Postgres' connection limit under any real traffic.
+
+Three things about this deployment are worth remembering:
+
+- **The filesystem is ephemeral.** Anything written to disk at runtime is
+  discarded. That is why `storage.py` exists: a SQLite file would appear to
+  work and then silently lose every saved chart.
+- **No ephemeris data files are shipped.** `swe.set_ephe_path()` is skipped
+  when the directory is absent and pyswisseph falls back to its built-in
+  Moshier ephemeris. Slightly less precise — watch the dasha drift budget
+  below.
+- **60 second function ceiling** on the Hobby plan (`vercel.json`). A full
+  eight-section Opus reading can approach it. If readings start timing out,
+  stream the response or move to a host without the ceiling rather than
+  trimming the rules.
+
 ## Conventions
 
 - Lahiri ayanamsa throughout (`swe.SIDM_LAHIRI`). Do not change — it is the
@@ -122,6 +165,8 @@ days' drift from that report — acceptable, but do not let it grow.
   genuinely different house systems used side by side; that is correct, not a bug.
 - Time zone offsets are stored as the offset **at the time of birth**, not the
   modern offset for that location.
+- All database access goes through `storage.py`. Nothing else imports
+  `sqlite3` or `psycopg`, so the two backends cannot drift apart.
 - Navamsha is computed as `(longitude * 9) // 30`, never `longitude // (30/9)`.
   30/9 is not representable in binary floating point and the second form is
   wrong on every exact sign boundary — it puts 0° Gemini in Virgo instead of
@@ -140,8 +185,12 @@ days' drift from that report — acceptable, but do not let it grow.
 - **Voice mode** — speech-to-text and text-to-speech, per the original AstroSage
   reference. Not started.
 - **Billing / wallet** — per-minute metering. Not started.
-- **Multi-user auth** — currently single-user local. The SQLite schema has no
-  user column yet.
+- **Multi-user auth** — still single-user. Neither schema has a user column.
+  Note that `profiles` holds birth dates, times and places, which is
+  identifying personal data: `supabase_schema.sql` enables row level
+  security with no policies and revokes the PostgREST grants, so the table
+  is unreachable through the anon key. When adding auth, add a `user_id`
+  column and a policy — do not disable RLS to make something work.
 - **Cusp sub-lord significator chains** — KP significator tables (which planets
   signify which houses via occupancy, ownership and star lord) are computed
   implicitly by the model rather than explicitly in code. Making this explicit
