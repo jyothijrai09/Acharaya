@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 # Profile storage lives in storage.py, which speaks SQLite locally and
 # PostgreSQL (Supabase) when DATABASE_URL is set. Re-exported here so that
 # existing `from astro_engine_v2 import ...` imports keep working.
+import vargas
 from storage import (  # noqa: F401
     init_db, save_profile, list_profiles, get_profile, delete_profile, DB_PATH,
 )
@@ -428,6 +429,13 @@ def compute_natal_chart(profile):
 
     planets = compute_planets(jd, asc_lon)
     navamsha = compute_navamsha(planets, asc_lon)
+
+    # Every divisional chart, computed once with the rest of the natal
+    # chart. This is pure arithmetic over positions already in hand — no
+    # ephemeris call and no model call — so computing all sixteen costs
+    # effectively nothing and saves recomputing one when it is asked for.
+    divisional = vargas.compute_all(
+        planets, asc_lon, SIGNS, SIGN_LORDS, get_dignity)
     kp_cusps = compute_kp_cusps(jd, profile['lat'], profile['lon'])
     dasha_timeline = compute_dasha_timeline(planets['Moon']['longitude'], utc_dt, levels=2)
     current_md, current_ad = get_current_mahadasha_antardasha(dasha_timeline)
@@ -442,6 +450,7 @@ def compute_natal_chart(profile):
         'lagna': {'sign': asc_sign, 'longitude': round(asc_lon,2), 'nakshatra': asc_nak, 'pada': asc_pada},
         'planets': planets,
         'navamsha': navamsha,
+        'divisional': divisional,
         'kp_cusps': kp_cusps,
         'dasha_timeline': dasha_timeline,
         'current_dasha': {'mahadasha': current_md, 'antardasha': current_ad},
@@ -506,6 +515,34 @@ def context_to_prompt_text(context):
     vargottama = [k for k, v in d9['planets'].items() if v['vargottama']]
     lines.append("Vargottama planets (same sign in D1 and D9, markedly strengthened): "
                  + (", ".join(vargottama) if vargottama else "none"))
+
+    div = n.get('divisional') or {}
+    for key in ("D10", "D30"):
+        v = div.get(key)
+        if not v:
+            continue
+        lines.append(f"\n-- {key} {v['name']} ({v['meaning']}) --")
+        lines.append(f"{key} Lagna: {v['lagna']['sign']} | Lord: {v['lagna']['lord']}")
+        for name, p in v["planets"].items():
+            marks = []
+            if p.get("dignity"):
+                marks.append(p["dignity"].upper())
+            if p.get("vargottama"):
+                marks.append("VARGOTTAMA")
+            suffix = (" | " + " | ".join(marks)) if marks else ""
+            lines.append(f"{name}: {p['sign']} | House {p['house']} | Lord: {p['lord']}{suffix}")
+        if v.get("note"):
+            lines.append(f"Note: {v['note']}")
+
+    others = [k for k in div if k not in ("D1", "D9", "D10", "D30")]
+    if others:
+        lines.append("\n-- Other divisional charts computed and available --")
+        lines.append(", ".join(
+            f"{k} ({div[k]['name']}: {div[k]['meaning']})" for k in others))
+        lines.append("These are computed but not printed above to keep this "
+                     "block short. If a question turns on one of them, say "
+                     "which and that it can be shown \u2014 do not guess at "
+                     "placements you have not been given.")
 
     lines.append("\n-- KP House Cusps (Placidus) --")
     for house, c in n['kp_cusps'].items():

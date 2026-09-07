@@ -29,9 +29,44 @@ MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "4000"))
 
 DEFAULT_MODELS = {
     "anthropic": "claude-opus-5",
-    # Free tier at time of writing. gemini-2.5-flash is a lighter alternative.
     "gemini": "gemini-3.8-flash",
 }
+
+# What a person may choose from. An allow-list rather than free text:
+# the model name reaches this from the browser, and an unchecked string
+# would let anyone bill the account against any model the key can reach.
+CHOICES = [
+    {"id": "gemini-3.8-flash", "provider": "gemini",
+     "label": "Gemini 3.8 Flash", "cost": "free tier"},
+    {"id": "gemini-2.5-flash", "provider": "gemini",
+     "label": "Gemini 2.5 Flash", "cost": "free tier, older"},
+    {"id": "claude-sonnet-5", "provider": "anthropic",
+     "label": "Claude Sonnet 5", "cost": "$2 / $10 per Mtok"},
+    {"id": "claude-opus-5", "provider": "anthropic",
+     "label": "Claude Opus 5", "cost": "$5 / $25 per Mtok"},
+]
+
+BY_ID = {c["id"]: c for c in CHOICES}
+
+
+def provider_available(provider):
+    """Whether the key for a provider is present. Offering a model the
+    server cannot reach would only produce a confusing failure."""
+    if provider == "gemini":
+        return bool(os.environ.get("GEMINI_API_KEY")
+                    or os.environ.get("GOOGLE_API_KEY"))
+    if provider == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return False
+
+
+def available_choices():
+    """The choices this deployment can actually serve, default first."""
+    default = current_model()
+    out = [dict(c, is_default=(c["id"] == default))
+           for c in CHOICES if provider_available(c["provider"])]
+    out.sort(key=lambda c: (not c["is_default"], c["provider"]))
+    return out
 
 
 def current_model():
@@ -41,6 +76,44 @@ def current_model():
 
 class ProviderError(RuntimeError):
     """Raised with an actionable message when a provider cannot answer."""
+
+
+def _readable_provider_failure(exc, model):
+    """Turn an SDK exception into something worth showing a querent.
+
+    The common failures here are the provider's, not the app's: the model
+    is overloaded, or the account is rate limited or out of credit. Left
+    raw, those surface as a paragraph of stack trace that reads like a
+    bug in the reading, and the one useful instruction — try a different
+    model — is nowhere in it."""
+    text = str(exc)
+    lowered = text.lower()
+
+    if "503" in text or "unavailable" in lowered or "overloaded" in lowered:
+        return ProviderError(
+            f"{model} is overloaded right now — the provider is asking us "
+            f"to try again shortly. This is on their side, not your chart. "
+            f"Wait a moment and ask again, or pick a different model."
+        )
+    if "429" in text or "rate limit" in lowered or "quota" in lowered:
+        return ProviderError(
+            f"{model} has hit its rate limit or quota. Free tiers cap how "
+            f"often you can ask. Wait a little, or pick a different model."
+        )
+    if "credit" in lowered or "billing" in lowered or "payment" in lowered:
+        return ProviderError(
+            f"{model} refused the request for billing reasons — usually no "
+            f"credit on the account. Add credit, or pick a different model."
+        )
+    if "401" in text or "403" in text or "api key" in lowered:
+        return ProviderError(
+            f"{model} rejected the API key. Check it is set correctly and "
+            f"has not been revoked."
+        )
+
+    # Anything unrecognised keeps its original text: a wrong guess here
+    # would hide the only clue to a genuine bug.
+    return ProviderError(f"{model} could not answer: {text}")
 
 
 # Clients are cached per key and kept alive for the life of the process.
@@ -75,7 +148,7 @@ def _anthropic_client(key):
 
 # ---------------------------------------------------------------- anthropic
 
-def _generate_anthropic(system, messages, max_tokens):
+def _generate_anthropic(system, messages, max_tokens, model=None):
     # Check configuration before importing. If the SDK is also missing, an
     # ImportError would otherwise mask the message that actually helps.
     key = os.environ.get("ANTHROPIC_API_KEY")
@@ -93,18 +166,21 @@ def _generate_anthropic(system, messages, max_tokens):
             "Run: pip install anthropic"
         ) from e
 
-    response = client.messages.create(
-        model=current_model(),
-        max_tokens=max_tokens,
-        system=system,
-        messages=messages,
-    )
+    try:
+        response = client.messages.create(
+            model=model or current_model(),
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+        )
+    except Exception as e:
+        raise _readable_provider_failure(e, model or current_model())
     return "".join(b.text for b in response.content if b.type == "text")
 
 
 # ------------------------------------------------------------------ gemini
 
-def _generate_gemini(system, messages, max_tokens):
+def _generate_gemini(system, messages, max_tokens, model=None):
     # Configuration before import, for the same reason as the Anthropic path.
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
@@ -131,14 +207,17 @@ def _generate_gemini(system, messages, max_tokens):
         for m in messages
     ]
 
-    response = client.models.generate_content(
-        model=current_model(),
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-        ),
-    )
+    try:
+        response = client.models.generate_content(
+            model=model or current_model(),
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                max_output_tokens=max_tokens,
+            ),
+        )
+    except Exception as e:
+        raise _readable_provider_failure(e, model or current_model())
 
     text = response.text
     if not text:
@@ -164,18 +243,35 @@ def _generate_gemini(system, messages, max_tokens):
 _BACKENDS = {"anthropic": _generate_anthropic, "gemini": _generate_gemini}
 
 
-def generate(system, messages, max_tokens=None):
+def generate(system, messages, max_tokens=None, model=None):
     """
-    Ask the configured provider for one completion.
+    Ask a provider for one completion.
 
     system:   the full system prompt (personas + shared rules)
     messages: [{"role": "user"|"assistant", "content": str}, ...] — the entire
               conversation, sent in full every call
+    model:    optional, one of CHOICES. Anything not on that list is
+              refused rather than passed through: the value arrives from
+              the browser, and an unchecked string would let a caller
+              bill this account against any model the key can reach.
     """
-    backend = _BACKENDS.get(PROVIDER)
+    provider = PROVIDER
+    if model:
+        choice = BY_ID.get(model)
+        if not choice:
+            raise ProviderError(f"Unknown model {model!r}.")
+        if not provider_available(choice['provider']):
+            raise ProviderError(
+                f"{choice['label']} needs a "
+                f"{choice['provider'].upper()}_API_KEY, which is not set "
+                f"on this server."
+            )
+        provider = choice["provider"]
+
+    backend = _BACKENDS.get(provider)
     if backend is None:
         raise ProviderError(
-            f"Unknown LLM_PROVIDER {PROVIDER!r}. "
+            f"Unknown provider {provider!r}. "
             f"Expected one of: {', '.join(sorted(_BACKENDS))}."
         )
-    return backend(system, messages, max_tokens or MAX_OUTPUT_TOKENS)
+    return backend(system, messages, max_tokens or MAX_OUTPUT_TOKENS, model)

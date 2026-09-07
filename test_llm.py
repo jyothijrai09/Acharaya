@@ -81,7 +81,7 @@ check_raises("gemini without key",
 
 llm = load_llm(LLM_PROVIDER="nonsense")
 check_raises("unknown provider",
-             lambda: llm.generate("sys", HISTORY), "Unknown LLM_PROVIDER")
+             lambda: llm.generate("sys", HISTORY), "Unknown provider")
 
 # ---------------------------------------------------------------
 # 3. Gemini wiring: roles translated, system prompt and token cap passed
@@ -209,6 +209,98 @@ check("anthropic roles untouched",
       [m["role"] for m in anthropic_captured["messages"]],
       ["user", "assistant", "user"])
 check("anthropic max tokens default", anthropic_captured["max_tokens"], 4000)
+
+# ---------------------------------------------------------------
+# 6. Model selection. The model name arrives from the browser, so anything
+#    not on the allow-list must be refused rather than passed through — an
+#    unchecked string would let a caller bill this account against any model
+#    the key can reach.
+# ---------------------------------------------------------------
+llm = load_llm(LLM_PROVIDER="gemini", GEMINI_API_KEY="test-key")
+
+check_raises("unknown model refused",
+             lambda: llm.generate("sys", HISTORY, model="gpt-4"),
+             "Unknown model")
+check_raises("model injection refused",
+             lambda: llm.generate("sys", HISTORY, model="../../etc/passwd"),
+             "Unknown model")
+
+# A model whose provider has no key must say so, not fail obscurely later.
+check_raises("model without its key",
+             lambda: llm.generate("sys", HISTORY, model="claude-opus-5"),
+             "ANTHROPIC_API_KEY")
+
+# Only choices this deployment can serve are offered.
+ids = [c["id"] for c in llm.available_choices()]
+check("only gemini offered without an anthropic key",
+      all(i.startswith("gemini") for i in ids), True)
+check("gemini choices present", "gemini-3.8-flash" in ids, True)
+
+llm = load_llm(LLM_PROVIDER="gemini", GEMINI_API_KEY="k1",
+               ANTHROPIC_API_KEY="k2")
+ids = [c["id"] for c in llm.available_choices()]
+for expected in ("gemini-3.8-flash", "claude-sonnet-5", "claude-opus-5"):
+    check("%s offered when both keys set" % expected, expected in ids, True)
+check("default is listed first",
+      llm.available_choices()[0]["is_default"], True)
+check("default matches current_model",
+      llm.available_choices()[0]["id"], llm.current_model())
+
+# Choosing an Anthropic model must route to the Anthropic backend even though
+# LLM_PROVIDER says gemini — that is the whole point of the selector.
+routed = {}
+
+
+class _RoutedMessages:
+    def create(self, *, model, max_tokens, system, messages):
+        routed["model"] = model
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(type="text", text="from claude")])
+
+
+class _RoutedAnthropic:
+    def __init__(self, api_key=None):
+        self.messages = _RoutedMessages()
+
+
+stub = types.ModuleType("anthropic")
+stub.Anthropic = _RoutedAnthropic
+sys.modules["anthropic"] = stub
+llm._clients.clear()
+try:
+    answer = llm.generate("sys", HISTORY, model="claude-sonnet-5")
+    check("routed to anthropic", answer, "from claude")
+    check("routed with the chosen model", routed.get("model"), "claude-sonnet-5")
+finally:
+    sys.modules.pop("anthropic", None)
+    llm._clients.clear()
+
+# ---------------------------------------------------------------
+# 7. Provider failures are translated into something actionable. A 503 is the
+#    provider's problem, and the raw exception buries that in a stack trace.
+# ---------------------------------------------------------------
+translate = llm._readable_provider_failure
+check("503 mentions overload",
+      "overloaded" in str(translate(Exception("503 UNAVAILABLE"), "m")).lower(),
+      True)
+check("503 suggests another model",
+      "different model" in str(translate(Exception("503 UNAVAILABLE"), "m")),
+      True)
+check("429 mentions rate limit",
+      "rate limit" in str(translate(Exception("429 Too Many Requests"), "m")).lower(),
+      True)
+check("billing mentions credit",
+      "credit" in str(translate(Exception("insufficient credit balance"), "m")).lower(),
+      True)
+check("401 mentions the key",
+      "key" in str(translate(Exception("401 unauthorized"), "m")).lower(),
+      True)
+# An unrecognised failure must keep its original text — guessing would hide
+# the only clue to a real bug.
+check("unknown failure keeps its text",
+      "something odd happened" in str(
+          translate(Exception("something odd happened"), "m")),
+      True)
 
 if failures:
     print("FAILED (%d)" % len(failures))

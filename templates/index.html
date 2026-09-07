@@ -89,6 +89,16 @@ header.top{
 }
 .profile:hover{border-color:var(--brass)}
 .profile[aria-pressed="true"]{border-color:var(--brass);background:var(--panel)}
+.profilerow{position:relative;margin-bottom:6px}
+.profilerow .profile{margin-bottom:0;padding-right:32px}
+.delprof{
+  position:absolute;top:50%;right:6px;transform:translateY(-50%);
+  background:transparent;border:0;color:var(--muted);font-size:15px;
+  line-height:1;padding:5px 7px;border-radius:3px;opacity:0;
+  transition:opacity .12s;
+}
+.profilerow:hover .delprof,.delprof:focus-visible{opacity:1}
+.delprof:hover{color:var(--weak);background:var(--panel-2)}
 .profile .nm{font-size:14px;font-weight:500}
 .profile .mt{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
 
@@ -128,6 +138,19 @@ header.top{
   border-radius:3px;padding:9px 20px;
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
+
+/* ---------- model picker ---------- */
+.modelrow{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
+}
+.modelrow label{font-size:11px;color:var(--muted);letter-spacing:.03em}
+.modelrow select{
+  background:var(--ink);border:1px solid var(--line);color:var(--text);
+  border-radius:3px;padding:5px 8px;font-family:var(--sans);font-size:12px;
+  max-width:100%;
+}
+.modelcost{font-family:var(--mono);font-size:11px;color:var(--muted)}
 
 /* ---------- suggested follow-ups ---------- */
 .suggest{margin:0 0 14px}
@@ -329,6 +352,16 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
   color:var(--muted);margin:0 0 4px;text-transform:uppercase;
 }
 .chartcard .cap{font-size:12px;color:var(--muted);margin:0 0 10px}
+.vargasel{
+  background:var(--ink);border:1px solid var(--line);color:var(--text);
+  border-radius:3px;padding:4px 7px;font-family:var(--sans);font-size:12px;
+  margin-bottom:6px;max-width:100%;
+}
+.vargahead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+.vnote{
+  font-size:11.5px;color:var(--muted);line-height:1.5;margin:8px 0 0;
+  padding-top:8px;border-top:1px solid var(--line);
+}
 .chartcard svg{display:block;width:100%;height:auto}
 .kline{stroke:var(--line);stroke-width:1;fill:none}
 .kframe{stroke:var(--line);stroke-width:1.5;fill:none}
@@ -447,6 +480,11 @@ details.raw pre{
             </div>
             <button class="send" id="send">Ask</button>
           </div>
+          <div class="modelrow" id="modelrow" hidden>
+            <label for="modelsel">Answered by</label>
+            <select id="modelsel"></select>
+            <span class="modelcost" id="modelcost"></span>
+          </div>
         </div>
       </div>
 
@@ -466,9 +504,12 @@ details.raw pre{
             <div id="d1chart"></div>
           </div>
           <div class="chartcard" id="d9card">
-            <h3>D9 &mdash; Navamsha</h3>
+            <div class="vargahead">
+              <select class="vargasel" id="vargasel" aria-label="Divisional chart"></select>
+            </div>
             <p class="cap" id="d9cap"></p>
             <div id="d9chart"></div>
+            <p class="vnote" id="vnote" hidden></p>
           </div>
         </div>
 
@@ -601,16 +642,41 @@ function inline(s){
 // ---------- rendering ----------
 function drawProfiles(){
   $('profiles').innerHTML = profiles.map(p => `
-    <button class="profile" data-id="${p.id}" aria-pressed="${p.id===pid}">
-      <div class="nm">${p.name}</div>
-      <div class="mt">${p.date} · ${p.place}</div>
-    </button>`).join('') ||
+    <div class="profilerow">
+      <button class="profile" data-id="${p.id}" aria-pressed="${p.id===pid}">
+        <div class="nm">${esc(p.name)}</div>
+        <div class="mt">${esc(p.date)} · ${esc(p.place)}</div>
+      </button>
+      <button class="delprof" data-del="${p.id}" type="button"
+              title="Delete this chart"
+              aria-label="Delete ${esc(p.name)}">&times;</button>
+    </div>`).join('') ||
     '<div class="mt" style="color:var(--muted);font-size:13px;margin-bottom:8px">No charts saved yet.</div>';
 
   document.querySelectorAll('.profile').forEach(b => b.onclick = () => {
     pid = +b.dataset.id; history = []; $('reading').innerHTML = '';
     $('empty').hidden = false;
     drawProfiles(); updateWho(); loadChart();
+  });
+
+  document.querySelectorAll('.delprof').forEach(b => b.onclick = async () => {
+    const id = +b.dataset.del;
+    const p = profiles.find(x => x.id === id);
+    // Deleting a chart takes its readings with it, by cascade. That is worth
+    // saying out loud rather than discovering afterwards.
+    if(!confirm('Delete ' + (p ? p.name : 'this chart') +
+                ' and every reading on it? This cannot be undone.')) return;
+    b.disabled = true;
+    try{
+      const r = await fetch('/api/profiles/' + id, {method: 'DELETE'});
+      const d = await r.json();
+      if(d.error) throw new Error(d.error);
+      if(pid === id){ pid = null; history = []; $('reading').innerHTML = ''; }
+      await boot(pid);
+    }catch(e){
+      showErr('Could not delete that chart: ' + e.message);
+      b.disabled = false;
+    }
   });
 }
 
@@ -674,11 +740,25 @@ async function ask(){
     const r = await fetch('/api/ask', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({profile_id: pid, question, persona, history})
+      body: JSON.stringify({profile_id: pid, question, persona, history,
+                            model: chosenModel})
     });
-    const d = await r.json();
-    if(d.error) throw new Error(d.error);
-    history = d.history;
+    let d;
+    try{
+      d = await r.json();
+    }catch(parseError){
+      // A gateway timeout or crash returns HTML, not JSON.
+      throw new Error(r.status === 504
+        ? 'the reading took too long and the server gave up. A shorter '
+          + 'question, or a faster model, usually gets through.'
+        : 'the server returned something unreadable (HTTP ' + r.status + ').');
+    }
+    if(d && d.error) throw new Error(d.error);
+    if(!d || typeof d.answer !== 'string' || !d.answer.trim()){
+      throw new Error('the astrologer returned an empty reading. '
+        + 'Ask again, or try a different model.');
+    }
+    history = d.history || history;
     turn.querySelector('.a').className = 'a';
     turn.querySelector('.a').innerHTML = md(d.answer);
     loadChart();
@@ -697,6 +777,12 @@ $('addBtn').onclick = () => $('dlg').showModal();
 $('dlgCancel').onclick = () => $('dlg').close();
 
 $('dlgSave').onclick = async () => {
+  // Guard against a second click while the first is in flight. Without this a
+  // double click saves the chart twice, which is how duplicate profiles
+  // appeared in the list.
+  if($('dlgSave').disabled) return;
+  $('dlgSave').disabled = true;
+
   const body = {
     name: $('f_name').value.trim(),
     full_birth_name: $('f_full').value.trim(),
@@ -705,17 +791,23 @@ $('dlgSave').onclick = async () => {
     place: $('f_place').value.trim(),
     lat: $('f_lat').value, lon: $('f_lon').value, tz_offset: $('f_tz').value
   };
-  const r = await fetch('/api/profiles', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
-  });
-  const d = await r.json();
-  if(d.error){
-    $('dlgErr').innerHTML = `<div class="err">${d.error}</div>`;
-    return;
+  try{
+    const r = await fetch('/api/profiles', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if(d.error){
+      $('dlgErr').innerHTML = `<div class="err">${esc(d.error)}</div>`;
+      return;
+    }
+    $('dlgErr').innerHTML = '';
+    $('dlg').close();
+    await boot(d.id);
+  }catch(e){
+    $('dlgErr').innerHTML = `<div class="err">Could not save: ${esc(e.message)}</div>`;
+  }finally{
+    $('dlgSave').disabled = false;
   }
-  $('dlgErr').innerHTML = '';
-  $('dlg').close();
-  await boot(d.id);
 };
 
 // A chip fills the question; it does not send it. Sending on click meant a
@@ -1072,6 +1164,48 @@ async function loadHistory(){
   }
 }
 
+// ---------- model picker ----------
+// Which model answers is the querent's choice, not a deployment setting. It
+// also doubles as the way out of an overloaded provider: when Gemini returns
+// 503, switching to Claude here gets an answer without touching the server.
+let chosenModel = null;
+let modelChoices = [];
+
+function describeModel(id){
+  const c = modelChoices.find(m => m.id === id);
+  return c ? c.cost : '';
+}
+
+async function loadModels(){
+  try{
+    modelChoices = await fetch('/api/models').then(r => r.json());
+    if(modelChoices.error || !modelChoices.length) throw new Error('none');
+  }catch(e){
+    $('modelrow').hidden = true;
+    return;
+  }
+
+  // A remembered choice must still be on offer — keys change, and a stale
+  // pick would fail on the server rather than in the picker.
+  let saved = null;
+  try{ saved = localStorage.getItem('jyotish-model'); }catch(e){}
+  const valid = modelChoices.some(m => m.id === saved);
+  chosenModel = valid ? saved : (modelChoices.find(m => m.is_default) || modelChoices[0]).id;
+
+  $('modelsel').innerHTML = modelChoices.map(m =>
+    '<option value="' + esc(m.id) + '"' +
+    (m.id === chosenModel ? ' selected' : '') + '>' +
+    esc(m.label) + '</option>').join('');
+  $('modelcost').textContent = describeModel(chosenModel);
+  $('modelrow').hidden = false;
+
+  $('modelsel').onchange = () => {
+    chosenModel = $('modelsel').value;
+    $('modelcost').textContent = describeModel(chosenModel);
+    try{ localStorage.setItem('jyotish-model', chosenModel); }catch(e){}
+  };
+}
+
 // ---------- suggested follow-ups ----------
 // Built from the computed chart already in the browser, not by asking the
 // model what to ask next. That keeps them free, instant, and — more usefully —
@@ -1370,25 +1504,66 @@ function numerologyBlock(n){
     '<div><span>' + esc(k) + '</span>' + v + '</div>').join('') + '</div>';
 }
 
+// Which divisional chart sits beside the rashi. All sixteen are computed
+// with the natal chart — pure arithmetic over positions already in hand, no
+// ephemeris and no model call — so switching is instant and costs nothing.
+let chosenVarga = 'D9';
+try{ chosenVarga = localStorage.getItem('jyotish-varga') || 'D9'; }catch(e){}
+
+function renderVarga(){
+  const raw = lastChartRaw;
+  if(!raw || !raw.natal_chart) return;
+  const div = raw.natal_chart.divisional || {};
+  const sel = $('vargasel');
+
+  const keys = Object.keys(div);
+  if(!keys.length){
+    // An older cached chart with no divisional block: fall back to D9 alone.
+    const nav = raw.natal_chart.navamsha;
+    $('d9card').hidden = !nav;
+    if(nav){
+      $('d9chart').innerHTML = buildChart(nav.lagna.sign, nav.planets, lastVg);
+      $('d9cap').textContent = 'D9 lagna ' + nav.lagna.sign + ', lord ' + nav.lagna.lord;
+    }
+    return;
+  }
+
+  if(!div[chosenVarga]) chosenVarga = 'D9';
+  sel.innerHTML = keys.map(k =>
+    '<option value="' + esc(k) + '"' + (k === chosenVarga ? ' selected' : '') +
+    '>' + esc(k) + ' — ' + esc(div[k].name) + '</option>').join('');
+
+  const v = div[chosenVarga];
+  $('d9chart').innerHTML = buildChart(v.lagna.sign, v.planets, lastVg);
+  $('d9cap').textContent = chosenVarga + ' lagna ' + v.lagna.sign +
+    ', lord ' + v.lagna.lord +
+    (v.lagna.vargottama ? ' — vargottama' : '') + ' · ' + v.meaning;
+  $('vnote').textContent = v.note || '';
+  $('vnote').hidden = !v.note;
+  $('d9card').hidden = false;
+
+  sel.onchange = () => {
+    chosenVarga = sel.value;
+    try{ localStorage.setItem('jyotish-varga', chosenVarga); }catch(e){}
+    renderVarga();
+  };
+}
+
+let lastVg = new Set();
+
 function renderCharts(raw){
   const natal = raw.natal_chart;
   const nav = natal.navamsha;
   const vg = new Set(nav ? Object.entries(nav.planets)
     .filter(([, p]) => p.vargottama).map(([n]) => n) : []);
+  lastVg = vg;
 
   $('d1chart').innerHTML = buildChart(natal.lagna.sign, natal.planets, vg);
   $('d1cap').textContent = 'Lagna ' + natal.lagna.sign + ' ' +
     (natal.lagna.longitude % 30).toFixed(2) + '°, ' +
     natal.lagna.nakshatra + ' pada ' + natal.lagna.pada;
 
-  if(nav){
-    $('d9chart').innerHTML = buildChart(nav.lagna.sign, nav.planets, vg);
-    $('d9cap').textContent = 'D9 lagna ' + nav.lagna.sign +
-      ', lord ' + nav.lagna.lord + (nav.lagna.vargottama ? ' — vargottama' : '');
-    $('d9card').hidden = false;
-  }else{
-    $('d9card').hidden = true;
-  }
+  renderVarga();
 
   const blocks = [
     ['Planets — D1', planetTable(natal.planets, vg)],
@@ -1428,6 +1603,7 @@ async function boot(selectId){
   // pending visitor cannot make the server do work on their behalf.
   if(await initAuth()){
     await boot();
+    loadModels();
     loadAdmin();
   }
 })();

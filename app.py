@@ -32,7 +32,9 @@ from storage import (
 )
 import auth
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
-from llm import generate, current_model, ProviderError, PROVIDER
+from llm import (
+    generate, current_model, ProviderError, PROVIDER, available_choices,
+)
 import geocode
 
 # Absolute template path: on a serverless host the working directory is not
@@ -274,6 +276,7 @@ def api_ask():
         answer = generate(
             system=build_system_prompt(persona),
             messages=messages,
+            model=d.get("model"),
         )
 
         # Recorded after the answer exists, so a failed call leaves no
@@ -281,7 +284,8 @@ def api_ask():
         # already reading, so it is logged rather than raised.
         try:
             save_reading(pid, question, answer, persona=persona,
-                         provider=PROVIDER, model=current_model())
+                         provider=PROVIDER,
+                         model=d.get("model") or current_model())
         except Exception:
             traceback.print_exc()
 
@@ -337,6 +341,15 @@ def api_geocode():
         return jsonify(geocode.search(query, birth=birth))
     except geocode.GeocodeError as e:
         return jsonify({"error": str(e)}), 502
+
+
+@app.get("/api/models")
+@require_user()
+def api_models():
+    """Models this deployment can actually serve. Only providers whose
+    key is set are offered — listing one we cannot reach would just
+    produce a confusing failure when it was picked."""
+    return jsonify(available_choices())
 
 
 @app.get("/api/model")
