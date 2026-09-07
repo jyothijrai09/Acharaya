@@ -129,6 +129,21 @@ header.top{
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
 
+/* ---------- suggested follow-ups ---------- */
+.suggest{margin:0 0 14px}
+.suggest[hidden]{display:none}
+.sugtitle{
+  font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:.04em;
+  color:var(--muted);text-transform:uppercase;margin-bottom:7px;
+}
+.sug{
+  display:block;width:100%;text-align:left;background:var(--panel);
+  border:1px solid var(--line);border-radius:4px;padding:9px 12px;
+  margin-bottom:6px;color:var(--text);font-family:var(--serif);
+  font-size:14.5px;line-height:1.45;
+}
+.sug:hover{border-color:var(--brass);background:var(--panel-2)}
+
 /* ---------- conversation ---------- */
 .conversation{display:flex;flex-direction:column;min-height:52vh}
 .reading{margin-top:0}
@@ -418,6 +433,8 @@ details.raw pre{
         <div class="reading" id="reading"></div>
         <div id="err"></div>
 
+        <div class="suggest" id="suggest" hidden></div>
+
         <div class="ask" id="composer">
           <textarea id="q" rows="2" placeholder="Ask about this chart…"></textarea>
           <div class="askbar">
@@ -627,7 +644,8 @@ async function loadChart(){
     renderCharts(d.raw);
     $('chartBox').hidden = false;
   }catch(e){ $('chartBox').hidden = true; }
-  loadHistory();
+  await loadHistory();
+  renderSuggestions();
 }
 
 function showErr(msg){
@@ -664,6 +682,7 @@ async function ask(){
     turn.querySelector('.a').className = 'a';
     turn.querySelector('.a').innerHTML = md(d.answer);
     loadChart();
+    renderSuggestions();
   }catch(e){
     turn.querySelector('.a').className = 'a';
     turn.querySelector('.a').innerHTML = '';
@@ -1044,13 +1063,98 @@ async function loadHistory(){
         (rows.length === 1 ? ' earlier reading' : ' earlier readings') +
         ' on this chart' +
         (rows.length > REPLAYED_TURNS
-          ? ' — the last ' + REPLAYED_TURNS + ' are carried into the conversation'
+          ? ' — the astrologer is told the last ' + REPLAYED_TURNS
           : '');
       $('threadnote').hidden = false;
     }
   }catch(e){
     $('reading').innerHTML = '';
   }
+}
+
+// ---------- suggested follow-ups ----------
+// Built from the computed chart already in the browser, not by asking the
+// model what to ask next. That keeps them free, instant, and — more usefully —
+// grounded: each one names a placement that is actually in this chart, so a
+// suggestion can never invite a question about something the data does not
+// contain. Rule 6 forbids the astrologer inventing placements; the interface
+// should not invite one either.
+function suggestNext(raw, alreadyAsked){
+  if(!raw || !raw.natal_chart) return [];
+  const n = raw.natal_chart;
+  const out = [];
+
+  // Where the current period ends is the single most useful thing to ask next.
+  const cur = n.current_dasha || {};
+  const md = (n.dasha_timeline || []).find(m => m.mahadasha === cur.mahadasha);
+  const ad = md && (md.antardashas || []).find(a => a.antardasha === cur.antardasha);
+  if(ad && cur.antardasha){
+    out.push('The ' + cur.antardasha + ' antardasha runs to ' + ad.end +
+             '. What changes when it ends?');
+  }
+
+  // Tensions worth naming: a planet strong by sign but weakened another way,
+  // and outright afflictions.
+  Object.entries(n.planets || {}).forEach(([name, p]) => {
+    if(p.dignity === 'exalted' && p.retrograde){
+      out.push(name + ' is exalted in ' + p.sign + ' but retrograde in house ' +
+               p.house + '. How do those pull against each other?');
+    } else if(p.dignity === 'debilitated'){
+      out.push(name + ' is debilitated in ' + p.sign + '. What does that cost me, ' +
+               'and is anything in the chart offsetting it?');
+    } else if(p.combust){
+      out.push(name + ' is combust at ' + p.sun_distance + '° from the Sun. ' +
+               'How much does that weaken it in practice?');
+    }
+  });
+
+  // Vargottama is the most useful thing D9 adds, so it is worth offering.
+  const nav = n.navamsha;
+  if(nav && nav.planets){
+    const vg = Object.entries(nav.planets)
+      .filter(([, p]) => p.vargottama).map(([k]) => k);
+    if(vg.length){
+      const list = vg.length > 2
+        ? vg.slice(0, 2).join(', ') + ' and ' + vg[2]
+        : vg.join(' and ');
+      out.push(list + ' ' + (vg.length > 1 ? 'are' : 'is') +
+               ' vargottama. What does that actually strengthen for me?');
+    }
+    if(nav.lagna && nav.lagna.lord){
+      out.push('My D9 lagna is ' + nav.lagna.sign + ', ruled by ' +
+               nav.lagna.lord + '. What does that say about marriage and partnership?');
+    }
+  }
+
+  // A standing question that is never about a period — the timeless kind the
+  // rules were changed to allow.
+  out.push('Setting timing aside, what does this chart say about my nature ' +
+           'that will not change?');
+
+  // Never suggest something already asked in this thread.
+  const seen = new Set((alreadyAsked || []).map(q => q.trim().toLowerCase()));
+  return out.filter(q => !seen.has(q.trim().toLowerCase())).slice(0, 3);
+}
+
+function renderSuggestions(){
+  const box = $('suggest');
+  if(!box) return;
+  const asked = Array.from(document.querySelectorAll('#reading .q'))
+    .map(el => el.textContent || '');
+  const items = suggestNext(lastChartRaw, asked);
+
+  if(!items.length || !pid){ box.hidden = true; box.innerHTML = ''; return; }
+
+  box.innerHTML = '<div class="sugtitle">You could ask next</div>' +
+    items.map(q => '<button type="button" class="sug">' + esc(q) + '</button>').join('');
+  box.hidden = false;
+
+  // Fills the box and stops. Sending on click would spend a reading before
+  // the person had decided to ask, which is the same trap the chips had.
+  box.querySelectorAll('.sug').forEach(b => b.onclick = () => {
+    $('q').value = b.textContent;
+    $('q').focus();
+  });
 }
 
 // ---------- chart drawing ----------

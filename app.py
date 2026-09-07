@@ -38,6 +38,11 @@ import geocode
 # Absolute template path: on a serverless host the working directory is not
 # the repository root, so Flask's relative default fails to find them.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Exchanges of history replayed to the astrologer. One exchange is a
+# question and its answer, so this is REPLAYED_TURNS * 2 messages. Three
+# keeps a follow-up coherent without the prompt growing without limit.
+REPLAYED_TURNS = int(os.environ.get('REPLAYED_TURNS', '3'))
+
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 init_db()
 
@@ -112,6 +117,7 @@ def api_config():
     on its own because every table has RLS on with no policies.
     """
     return jsonify({
+        "replayed_turns": REPLAYED_TURNS,
         "auth_enabled": auth.is_configured(),
         "supabase_url": auth.SUPABASE_URL,
         "supabase_anon_key": auth.SUPABASE_ANON_KEY,
@@ -237,6 +243,17 @@ def api_ask():
     persona = d.get("persona", "integrated")
     history = d.get("history") or []
 
+    # Cap what is replayed to the model. Left unbounded, a long chat
+    # re-sends every previous reading on every question: by the tenth turn
+    # that is nine full readings of input, and the cost of asking anything
+    # grows with how long you have been talking.
+    #
+    # Enforced here rather than in the browser because the browser's copy is
+    # advisory — a stale tab, or anything else posting to this endpoint,
+    # could send the whole transcript. This also makes a live chat behave
+    # the same as one resumed after a reload, which previously differed.
+    history = history[-(REPLAYED_TURNS * 2):]
+
     if not pid or not question:
         return jsonify({"error": "profile_id and question are required"}), 400
     if persona not in PERSONAS:
@@ -268,10 +285,10 @@ def api_ask():
         except Exception:
             traceback.print_exc()
 
-        new_history = list(history) + [
+        new_history = (list(history) + [
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer},
-        ]
+        ])[-(REPLAYED_TURNS * 2):]
         return jsonify({"answer": answer, "history": new_history})
 
     except ProviderError as e:
