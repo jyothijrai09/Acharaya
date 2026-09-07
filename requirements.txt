@@ -1,6 +1,11 @@
 flask
 pyswisseph
 
+# Place lookup for the birth-details form. timezonefinder maps coordinates
+# to an IANA zone offline; the historical offset then comes from stdlib
+# zoneinfo. Geocoding itself is an unauthenticated call to OpenStreetMap.
+timezonefinder
+
 # Model providers. Only the one named by LLM_PROVIDER is imported at
 # runtime, so you may drop whichever you do not use.
 anthropic

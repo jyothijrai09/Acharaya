@@ -105,6 +105,11 @@ A. SUMMARY FIRST.
    caution is. A reader who stops after this paragraph should have a
    complete picture of the whole period across every part of their life.
 
+   If the question is NOT about a period — the chart as a whole, a standing
+   trait, a lifelong pattern — write the same paragraph about the chart
+   itself rather than about a window of time, and do not frame a permanent
+   feature of the chart as though it were a passing phase.
+
    Length: roughly six to ten sentences. Dense with substance, not padding.
 
 B. DETAIL AFTER.
@@ -173,6 +178,15 @@ B. DETAIL AFTER.
        transit movement in the data. A day-by-day or window-by-window
        breakdown where the question calls for it. Never give a timing
        statement that is not traceable to a date in the data.
+
+       NOT EVERY QUESTION IS A TIMING QUESTION. When the querent has asked
+       something general — what the chart says about their nature, a standing
+       pattern, a lifelong tendency, whether something is in the chart at all
+       — do not manufacture a window to fill this section. Say plainly that
+       the question is not bound to a period, give the standing answer, and
+       mention only the dasha context that genuinely colours it. Inventing a
+       timeframe the querent did not ask about is exactly the padding rule 5
+       forbids, and it makes a general answer look like a prediction.
 
    B8. VERDICT.
        Where the layers agree — that is the strongest signal. Where they

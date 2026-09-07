@@ -9,17 +9,32 @@
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{
+  /* Warm paper, so the serif and the brass still read as considered rather
+     than clinical. Brass is darkened from the dark theme's #D4A24C, which
+     fails contrast on a light ground. */
+  --ink:#FBF8F3;
+  --panel:#FFFFFF;
+  --panel-2:#F4EFE6;
+  --line:#E2DACE;
+  --brass:#9C6B22;
+  --on-brass:#FFFFFF;
+  --sindoor:#A8382A;
+  --text:#1B2A2F;
+  --muted:#5F7176;
+  --serif:'Newsreader',Georgia,serif;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+:root[data-theme="dark"]{
   --ink:#0D1B21;
   --panel:#14262E;
   --panel-2:#1B3038;
   --line:#24404A;
   --brass:#D4A24C;
+  --on-brass:#0D1B21;
   --sindoor:#D4574A;
   --text:#E6EDEA;
   --muted:#8CA3A8;
-  --serif:'Newsreader',Georgia,serif;
-  --sans:'IBM Plex Sans',system-ui,sans-serif;
-  --mono:'IBM Plex Mono',ui-monospace,monospace;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -101,7 +116,7 @@ header.top{
 }
 .chip:hover{border-color:var(--brass);color:var(--text)}
 .send{
-  background:var(--brass);border:0;color:var(--ink);font-weight:600;font-size:14px;
+  background:var(--brass);border:0;color:var(--on-brass);font-weight:600;font-size:14px;
   border-radius:3px;padding:9px 20px;
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
@@ -178,6 +193,34 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .dlgbar{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 .cancel{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:3px;padding:8px 16px}
 .cancel:hover{color:var(--text);border-color:var(--brass)}
+
+/* ---------- theme toggle ---------- */
+.themebtn{
+  background:transparent;border:1px solid var(--line);color:var(--muted);
+  border-radius:3px;padding:5px 11px;font-size:12px;
+}
+.themebtn:hover{border-color:var(--brass);color:var(--text)}
+
+/* ---------- place search ---------- */
+.searchrow{display:grid;grid-template-columns:1fr auto;gap:8px}
+.searchbtn{
+  background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+  border-radius:3px;padding:8px 14px;font-size:13px;white-space:nowrap;
+}
+.searchbtn:hover{border-color:var(--brass)}
+.searchbtn[disabled]{opacity:.55;cursor:default}
+.hits{list-style:none;margin:8px 0 0;padding:0;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.hits:empty{display:none;border:0}
+.hits li{border-bottom:1px solid var(--line)}
+.hits li:last-child{border-bottom:0}
+.hits button{
+  display:block;width:100%;text-align:left;background:transparent;border:0;
+  color:var(--text);padding:9px 11px;font-size:13px;line-height:1.35;
+}
+.hits button:hover{background:var(--panel-2)}
+.hits .meta{display:block;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:3px}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+.hint.warn{color:var(--sindoor)}
 </style>
 </head>
 <body>
@@ -185,7 +228,10 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 
   <header class="top">
     <div class="brand">Jyotish<span>.</span></div>
-    <div class="who" id="who"></div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <div class="who" id="who"></div>
+      <button class="themebtn" id="themeBtn" type="button">Dark</button>
+    </div>
   </header>
 
   <div class="cols">
@@ -208,10 +254,11 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
         <textarea id="q" rows="3" placeholder="What would you like to ask?"></textarea>
         <div class="askbar">
           <div class="chips">
-            <button class="chip" data-q="Give me a reading for the week ahead.">This week</button>
+            <button class="chip" data-q="Read my chart as a whole. I am not asking about any particular period — tell me what the chart itself says about who I am and the shape of my life.">My chart</button>
+<button class="chip" data-q="Give me a reading for the week ahead.">This week</button>
             <button class="chip" data-q="What does my chart say about my career and work right now?">Career</button>
             <button class="chip" data-q="What does my chart say about money and finances at present?">Money</button>
-            <button class="chip" data-q="What is my current dasha period and what does it mean for me?">My period</button>
+            <button class="chip" data-q="What is my current dasha period and what does it mean for me?">Current dasha</button>
           </div>
           <button class="send" id="send">Ask</button>
         </div>
@@ -267,7 +314,13 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 
   <div class="field">
     <label for="f_place">Place of birth</label>
-    <input id="f_place" placeholder="City, region, country">
+    <div class="searchrow">
+      <input id="f_place" placeholder="Jalgaon, Maharashtra, India">
+      <button type="button" class="searchbtn" id="f_search">Find</button>
+    </div>
+    <ul class="hits" id="f_hits"></ul>
+    <div class="hint" id="f_hint">Fill in the date of birth first, then search — the
+      time zone offset is historical and depends on the date.</div>
   </div>
 
   <div class="field">
@@ -455,6 +508,99 @@ document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
 $('send').onclick = ask;
 $('q').addEventListener('keydown', e => {
   if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ask();
+});
+
+// ---------- theme ----------
+// Light is the default. The choice is per-browser and survives reloads; if
+// localStorage is unavailable (private windows, blocked site data) the page
+// still renders correctly, it just forgets the preference.
+const themeBtn = $('themeBtn');
+function applyTheme(mode){
+  document.documentElement.setAttribute('data-theme', mode);
+  themeBtn.textContent = mode === 'dark' ? 'Light' : 'Dark';
+  themeBtn.setAttribute('aria-label', 'Switch to ' + (mode === 'dark' ? 'light' : 'dark') + ' theme');
+}
+let theme = 'light';
+try{ theme = localStorage.getItem('jyotish-theme') || 'light'; }catch(e){}
+applyTheme(theme);
+themeBtn.onclick = () => {
+  theme = theme === 'dark' ? 'light' : 'dark';
+  applyTheme(theme);
+  try{ localStorage.setItem('jyotish-theme', theme); }catch(e){}
+};
+
+// ---------- place search ----------
+// Coordinates come from OpenStreetMap; the time zone offset is computed for
+// the birth DATE, not today, because those differ (Britain was UTC+0 in March
+// 1984 and UTC+1 that July). An hour of error moves the ascendant by about
+// fifteen degrees, so this is worth getting from data rather than memory.
+function setHint(text, warn){
+  const el = $('f_hint');
+  el.textContent = text;
+  el.className = warn ? 'hint warn' : 'hint';
+}
+
+async function findPlace(){
+  const q = $('f_place').value.trim();
+  const hits = $('f_hits');
+  hits.innerHTML = '';
+  if(!q){ setHint('Type a place first — city, region, country.', true); return; }
+
+  const params = new URLSearchParams({q});
+  const y = $('f_year').value, m = $('f_month').value, d = $('f_day').value;
+  const haveDate = y && m && d;
+  if(haveDate){
+    params.set('year', y); params.set('month', m); params.set('day', d);
+    if($('f_hour').value) params.set('hour', $('f_hour').value);
+    if($('f_min').value)  params.set('minute', $('f_min').value);
+  }
+
+  $('f_search').disabled = true;
+  setHint('Searching…', false);
+  try{
+    const r = await fetch('/api/geocode?' + params.toString());
+    const data = await r.json();
+    if(data.error) throw new Error(data.error);
+    if(!data.length){ setHint('No place found by that name. Try adding the region or country.', true); return; }
+
+    data.forEach(p => {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      const off = p.tz_offset === null ? '—' : (p.tz_offset >= 0 ? '+' : '') + p.tz_offset;
+      b.innerHTML = '<span></span><span class="meta"></span>';
+      b.firstChild.textContent = p.name;
+      b.lastChild.textContent = p.lat + ', ' + p.lon + '  ·  ' + (p.timezone || 'no time zone') + '  ·  UTC' + off;
+      b.onclick = () => {
+        $('f_lat').value = p.lat;
+        $('f_lon').value = p.lon;
+        if(p.tz_offset !== null) $('f_tz').value = p.tz_offset;
+        $('f_place').value = p.name;
+        hits.innerHTML = '';
+        setHint(
+          p.offset_is_for_birth_date
+            ? 'Offset ' + off + ' is the one in force at that place on your birth date.'
+            : 'Offset ' + off + ' is today\u2019s — fill in the date of birth and search again to get the historical one.',
+          !p.offset_is_for_birth_date
+        );
+      };
+      li.appendChild(b);
+      hits.appendChild(li);
+    });
+    setHint(haveDate
+      ? 'Pick the closest match. Offsets shown are for your birth date.'
+      : 'Pick the closest match. Add the date of birth and search again for the historical time zone offset.',
+      !haveDate);
+  }catch(e){
+    setHint(e.message || 'The place lookup failed. You can enter the numbers by hand.', true);
+  }finally{
+    $('f_search').disabled = false;
+  }
+}
+
+$('f_search').onclick = findPlace;
+$('f_place').addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); findPlace(); }
 });
 
 // ---------- boot ----------

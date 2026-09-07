@@ -27,6 +27,7 @@ from astro_engine_v2 import (
 )
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
 from llm import generate, current_model, ProviderError, PROVIDER
+import geocode
 
 # Absolute template path: on a serverless host the working directory is not
 # the repository root, so Flask's relative default fails to find them.
@@ -135,6 +136,31 @@ def api_ask():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/geocode")
+def api_geocode():
+    """Place name -> coordinates and the UTC offset in force at birth.
+
+    The birth date is optional but worth sending: time zone offsets are
+    historical, and the offset that applied in 1984 is often not the one
+    that applies today."""
+    query = request.args.get("q", "")
+
+    birth = None
+    year, month, day = (request.args.get(k) for k in ("year", "month", "day"))
+    if year and month and day:
+        try:
+            birth = (int(year), int(month), int(day),
+                     int(request.args.get("hour") or 12),
+                     int(request.args.get("minute") or 0))
+        except ValueError:
+            birth = None   # partial or nonsense date: fall back to today's offset
+
+    try:
+        return jsonify(geocode.search(query, birth=birth))
+    except geocode.GeocodeError as e:
+        return jsonify({"error": str(e)}), 502
 
 
 @app.get("/api/model")
