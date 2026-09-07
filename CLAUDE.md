@@ -96,8 +96,9 @@ If you refactor `ask_astrologer()` or `/api/ask`, keep this property. Do not
 1. Core reasoning (1–7): full-chart reasoning every turn, cite placements,
    cross-check systems, timing from dasha not feeling, no filler, stay inside the
    data, frame honestly.
-2. Response structure (A, B1–B8): summary paragraph first, then dasha (longest
-   section), natal, navamsha, KP, transits, numerology, timing, verdict.
+2. Response structure (A, B1–B9): summary paragraph first, then dasha (longest
+   section), natal, navamsha, KP, transits, numerology, timing, Lal Kitab
+   remedies, verdict.
 3. Language (8–11): no idioms, explain mechanism not just verdict, define terms
    in line, plain sentences.
 4. Authority and care (12–15): speak from depth, never leave a hard placement

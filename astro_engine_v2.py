@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 # PostgreSQL (Supabase) when DATABASE_URL is set. Re-exported here so that
 # existing `from astro_engine_v2 import ...` imports keep working.
 import hora
+import remedies
 import vargas
 from storage import (  # noqa: F401
     init_db, save_profile, list_profiles, get_profile, delete_profile, DB_PATH,
@@ -437,6 +438,11 @@ def compute_natal_chart(profile):
     # effectively nothing and saves recomputing one when it is asked for.
     divisional = vargas.compute_all(
         planets, asc_lon, SIGNS, SIGN_LORDS, get_dignity)
+
+    # Lal Kitab remedies, selected by what this chart actually shows as
+    # strained. None when nothing warrants one: an empty section is
+    # better than a remedy invented to fill it.
+    lal_kitab = remedies.build(planets)
     kp_cusps = compute_kp_cusps(jd, profile['lat'], profile['lon'])
     dasha_timeline = compute_dasha_timeline(planets['Moon']['longitude'], utc_dt, levels=2)
     current_md, current_ad = get_current_mahadasha_antardasha(dasha_timeline)
@@ -452,6 +458,7 @@ def compute_natal_chart(profile):
         'planets': planets,
         'navamsha': navamsha,
         'divisional': divisional,
+        'lal_kitab': lal_kitab,
         'kp_cusps': kp_cusps,
         'dasha_timeline': dasha_timeline,
         'current_dasha': {'mahadasha': current_md, 'antardasha': current_ad},
@@ -594,6 +601,8 @@ def context_to_prompt_text(context):
                      "block short. If a question turns on one of them, say "
                      "which and that it can be shown \u2014 do not guess at "
                      "placements you have not been given.")
+
+    lines.extend(remedies.to_prompt_lines(n.get('lal_kitab')))
 
     lines.append("\n-- KP House Cusps (Placidus) --")
     for house, c in n['kp_cusps'].items():
