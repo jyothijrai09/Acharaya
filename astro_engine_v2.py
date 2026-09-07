@@ -261,9 +261,26 @@ def get_navamsha_longitude(longitude):
     0 deg Gemini in Virgo instead of Libra. Multiplying first keeps every sign
     boundary exact. Do not "simplify" this back.
     """
-    part = int(longitude * 9 // 30)                 # 0..107 around the zodiac
+    # Multiplying first fixes the boundaries between SIGNS. It does not fix
+    # the boundaries between navamshas inside a sign, which fall on thirds of
+    # a degree and are equally unrepresentable: 23°20' of Taurus is 160/3
+    # absolute, and (160/3) * 9 / 30 is exactly 16, but in floating point it
+    # comes out a hair under, flooring to 15 and putting the planet in Cancer
+    # instead of Leo. The epsilon corrects that.
+    #
+    # 1e-9 of a navamsha is well under a thousandth of an arcsecond, far below
+    # any precision the ephemeris offers, so it can only ever repair this
+    # rounding and never shift a genuine placement. test_vargas.py cross-checks
+    # this against the varga table, which is how the discrepancy surfaced.
+    part = int(longitude * 9 / 30 + 1e-9)           # 0..107 around the zodiac
     sign_idx = part % 12
-    offset = longitude * 9 - part * 30              # 0..30 within the D9 sign
+
+    # Clamped because the epsilon above can select the part whose boundary the
+    # longitude sits a fraction below, making this subtraction very slightly
+    # negative. Left unclamped, the returned longitude falls just under the
+    # start of its own sign, and get_sign() then reports the PREVIOUS sign —
+    # the exact wrong placement the epsilon was added to prevent.
+    offset = max(0.0, longitude * 9 - part * 30)    # 0..30 within the D9 sign
     return sign_idx * 30 + offset
 
 def get_dignity(planet, sign):
