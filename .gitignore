@@ -4,3 +4,13 @@ astro_profiles.db
 .env
 sample_context.txt
 .vercel/
+
+# Credential files. The Google OAuth client downloads as a JSON containing a
+# client_secret, and this repository is public — one careless `git add -A`
+# would publish it. Supabase only needs the two values pasted into its form,
+# so the file should never be here at all; this is the safety net.
+client_secret*.json
+*credentials*.json
+*service-account*.json
+.env
+.env.*
