@@ -91,6 +91,28 @@ def _q(sql):
 
 # ---------------------------------------------------------------- schema
 
+_SQLITE_USERS = """
+CREATE TABLE IF NOT EXISTS app_users (
+    id          TEXT PRIMARY KEY,
+    email       TEXT NOT NULL UNIQUE,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  TEXT,
+    approved_at TEXT,
+    approved_by TEXT
+)
+"""
+
+_POSTGRES_USERS = """
+CREATE TABLE IF NOT EXISTS app_users (
+    id          UUID PRIMARY KEY,
+    email       TEXT NOT NULL UNIQUE,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    approved_at TIMESTAMPTZ,
+    approved_by UUID
+)
+"""
+
 _SQLITE_READINGS = """
 CREATE TABLE IF NOT EXISTS readings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -154,6 +176,7 @@ def init_db():
     try:
         with conn:
             cur = conn.cursor()
+            cur.execute(_POSTGRES_USERS if USE_POSTGRES else _SQLITE_USERS)
             cur.execute(_POSTGRES_SCHEMA if USE_POSTGRES else _SQLITE_SCHEMA)
             cur.execute(_POSTGRES_READINGS if USE_POSTGRES else _SQLITE_READINGS)
 
@@ -162,6 +185,147 @@ def init_db():
                 cols = [r[1] for r in cur.execute("PRAGMA table_info(profiles)")]
                 if "full_birth_name" not in cols:
                     cur.execute("ALTER TABLE profiles ADD COLUMN full_birth_name TEXT")
+                if "user_id" not in cols:
+                    cur.execute("ALTER TABLE profiles ADD COLUMN user_id TEXT")
+    finally:
+        conn.close()
+
+
+# -------------------------------------------------------------- accounts
+
+USER_COLUMNS = ["id", "email", "status", "created_at", "approved_at", "approved_by"]
+
+
+def get_user(user_id):
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT " + ", ".join(USER_COLUMNS) +
+                       " FROM app_users WHERE id=?"), (str(user_id),))
+        row = cur.fetchone()
+        return dict(zip(USER_COLUMNS, row)) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_user(user_id, email, default_status="pending"):
+    """Return the account for a verified identity, creating it if new.
+
+    default_status is only consulted when the row does not exist. An existing
+    account's status is never overwritten here, so removing someone from
+    ADMIN_EMAILS does not silently demote them, and re-signing in does not
+    reset a rejection back to pending.
+    """
+    existing = get_user(user_id)
+    if existing:
+        return existing
+
+    conn = _connect()
+    try:
+        with conn:
+            cur = conn.cursor()
+            if USE_POSTGRES:
+                cur.execute(_q("""
+                    INSERT INTO app_users (id, email, status, approved_at)
+                    VALUES (?,?,?, CASE WHEN ?='admin' THEN NOW() ELSE NULL END)
+                    ON CONFLICT (id) DO NOTHING
+                """), (str(user_id), email, default_status, default_status))
+            else:
+                cur.execute("""
+                    INSERT OR IGNORE INTO app_users
+                        (id, email, status, created_at, approved_at)
+                    VALUES (?,?,?,?,?)
+                """, (str(user_id), email, default_status,
+                      datetime.utcnow().isoformat(),
+                      datetime.utcnow().isoformat() if default_status == "admin" else None))
+    finally:
+        conn.close()
+    return get_user(user_id)
+
+
+def list_users():
+    """Every account, newest first. Admin only — enforced by the caller."""
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT " + ", ".join(USER_COLUMNS) +
+                    " FROM app_users ORDER BY created_at DESC")
+        return [dict(zip(USER_COLUMNS, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def set_user_status(user_id, status, approved_by=None):
+    """Move an account between pending, approved and rejected.
+
+    'admin' is deliberately not settable here: admin comes from ADMIN_EMAILS,
+    so the set of administrators is configuration rather than something a
+    compromised session could grant itself.
+    """
+    if status not in ("pending", "approved", "rejected"):
+        raise ValueError("status must be pending, approved or rejected")
+
+    conn = _connect()
+    try:
+        with conn:
+            stamp = datetime.utcnow().isoformat() if not USE_POSTGRES else None
+            cur = conn.cursor()
+            if USE_POSTGRES:
+                cur.execute(_q("""
+                    UPDATE app_users
+                       SET status=?,
+                           approved_at = CASE WHEN ?='approved' THEN NOW() ELSE NULL END,
+                           approved_by = ?
+                     WHERE id=? AND status <> 'admin'
+                """), (status, status, str(approved_by) if approved_by else None,
+                       str(user_id)))
+            else:
+                cur.execute("""
+                    UPDATE app_users
+                       SET status=?, approved_at=?, approved_by=?
+                     WHERE id=? AND status <> 'admin'
+                """, (status, stamp if status == "approved" else None,
+                      str(approved_by) if approved_by else None, str(user_id)))
+    finally:
+        conn.close()
+    return get_user(user_id)
+
+
+def adopt_orphan_profiles(user_id):
+    """Give an admin the charts that predate authentication.
+
+    Profiles saved before sign-in existed have no owner. Rather than delete
+    them or leave them unreachable, the first admin to sign in takes them.
+    Runs at most once meaningfully: afterwards there are no orphans left.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            cur = conn.cursor()
+            cur.execute(_q("UPDATE profiles SET user_id=? WHERE user_id IS NULL"),
+                        (str(user_id),))
+            return cur.rowcount
+    finally:
+        conn.close()
+
+
+def can_access_profile(profile_id, user_id, is_admin=False):
+    """Whether this account may read or change this chart.
+
+    Called before every profile-scoped operation. Without it, an id in the URL
+    is enough to read somebody else's birth details — the ids are sequential
+    integers, so they are trivially guessable.
+    """
+    if is_admin:
+        return True
+    if not user_id:
+        return False
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(_q("SELECT 1 FROM profiles WHERE id=? AND user_id=?"),
+                    (profile_id, str(user_id)))
+        return cur.fetchone() is not None
     finally:
         conn.close()
 
@@ -169,7 +333,7 @@ def init_db():
 # ---------------------------------------------------------------- writes
 
 def save_profile(name, year, month, day, hour, minute, tz_offset,
-                 lat, lon, place, full_birth_name=None):
+                 lat, lon, place, full_birth_name=None, user_id=None):
     """Insert a birth profile and return its new id."""
     conn = _connect()
     try:
@@ -179,21 +343,23 @@ def save_profile(name, year, month, day, hour, minute, tz_offset,
                 cur.execute(_q("""
                     INSERT INTO profiles
                         (name, full_birth_name, year, month, day, hour, minute,
-                         tz_offset, lat, lon, place)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                         tz_offset, lat, lon, place, user_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                     RETURNING id
                 """), (name, full_birth_name or name, year, month, day, hour,
-                       minute, tz_offset, lat, lon, place))
+                       minute, tz_offset, lat, lon, place,
+                       str(user_id) if user_id else None))
                 return cur.fetchone()[0]
 
             cur.execute("""
                 INSERT INTO profiles
                     (name, full_birth_name, year, month, day, hour, minute,
-                     tz_offset, lat, lon, place, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     tz_offset, lat, lon, place, created_at, user_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (name, full_birth_name or name, year, month, day, hour,
                   minute, tz_offset, lat, lon, place,
-                  datetime.utcnow().isoformat()))
+                  datetime.utcnow().isoformat(),
+                  str(user_id) if user_id else None))
             return cur.lastrowid
     finally:
         conn.close()
@@ -262,16 +428,26 @@ def delete_profile(profile_id):
 
 # ---------------------------------------------------------------- reads
 
-def list_profiles():
+def list_profiles(user_id=None, include_all=False):
     """Rows of (id, name, place, year, month, day), oldest first.
+
+    include_all is the admin view. Otherwise the list is restricted to charts
+    this account owns; passing neither returns nothing rather than everything,
+    so a missing user cannot accidentally open the whole table.
 
     The tuple shape and column order are load-bearing: app.py indexes into
     them positionally when building the profile list for the UI.
     """
+    select = "SELECT id, name, place, year, month, day FROM profiles"
     conn = _connect()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT id, name, place, year, month, day FROM profiles ORDER BY id")
+        if include_all:
+            cur.execute(select + " ORDER BY id")
+        elif user_id:
+            cur.execute(_q(select + " WHERE user_id=? ORDER BY id"), (str(user_id),))
+        else:
+            return []
         return cur.fetchall()
     finally:
         conn.close()

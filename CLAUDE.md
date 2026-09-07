@@ -15,6 +15,7 @@ frontend.
 | `astro_personas.py` | The four personas and the 22 rules governing how they speak. The rules are the product — treat them as carefully as code. |
 | `app.py` | Flask server. REST API plus serves the UI. |
 | `templates/index.html` | The interface. Single file, no build step, vanilla JS. |
+| `auth.py` | Sign-in and approval. Verifies Supabase tokens; decides who may use the app. |
 | `geocode.py` | Place lookup. Nominatim for coordinates, timezonefinder + zoneinfo for the offset **at birth**. |
 | `llm.py` | Model provider layer. Anthropic or Gemini behind one `generate()`. The only module that talks to a model API. |
 | `storage.py` | Profile storage. SQLite locally, PostgreSQL when `DATABASE_URL` is set. The only module that talks to a database. |
@@ -151,6 +152,9 @@ Environment variables required on Vercel:
 | `ANTHROPIC_API_KEY` | required when `LLM_PROVIDER` is `anthropic` (the default) |
 | `GEMINI_API_KEY` | required when `LLM_PROVIDER=gemini` |
 | `LLM_PROVIDER` | optional, `anthropic` (default) or `gemini` |
+| `SUPABASE_URL` | `https://vscqltmszxujlctetpka.supabase.co` — enables sign-in |
+| `SUPABASE_ANON_KEY` | Supabase publishable key. Safe in client code; every table has RLS with no policies |
+| `ADMIN_EMAILS` | comma-separated. Listed addresses become admin on first sign-in |
 | `ASTRO_MODEL` | optional, overrides the provider's default model |
 | `LLM_MAX_TOKENS` | optional, defaults to 4000 |
 
@@ -171,6 +175,38 @@ Three things about this deployment are worth remembering:
   eight-section Opus reading can approach it. If readings start timing out,
   stream the response or move to a host without the ceiling rather than
   trimming the rules.
+
+## Accounts and approval
+
+Sign-in is Google via Supabase Auth. The browser holds the session and sends
+the access token on every `/api/` call; `auth.py` verifies it against Supabase
+rather than decoding it locally, so no JWT secret is held and key rotation
+cannot break it.
+
+```
+signed out  -> only /api/config and /api/me are reachable
+pending     -> row exists, an admin has not approved it
+approved    -> full use of their own charts
+admin       -> the above, plus every chart and the approval queue
+rejected    -> no access
+```
+
+Three properties worth keeping:
+
+- **Admin comes from `ADMIN_EMAILS`, never from the database.** `set_user_status()`
+  refuses to set `admin`. This is what lets the first admin exist before any
+  row does — otherwise nobody could approve the first account, themselves
+  included — and it means a compromised session cannot promote itself.
+- **Approval is checked per request, not at sign-in**, so revoking access takes
+  effect immediately rather than when a token expires.
+- **Every profile-scoped route calls `can_access_profile()` first.** Profile ids
+  are sequential integers, so without it an id in the URL is enough to read
+  someone else's birth details. Adding a route that takes a `pid` means adding
+  that check.
+
+With no `SUPABASE_URL` set the app runs open, which is what makes
+`python app.py` work on a laptop with no accounts at all. That branch is not
+reachable on Vercel, where the variable is always set.
 
 ## Conventions
 
@@ -202,6 +238,10 @@ Three things about this deployment are worth remembering:
   Without it SQLite ignores `ON DELETE CASCADE` and deleting a profile
   leaves orphaned readings, which Postgres would not — the two backends
   would silently disagree.
+- Model calls only ever happen on an explicit Ask. The question chips fill
+  the box and stop there; selecting a chart, drawing it and reading history
+  are all pure computation and cost nothing. Do not wire a model call to a
+  hover, a selection or a page load.
 - Navamsha is computed as `(longitude * 9) // 30`, never `longitude // (30/9)`.
   30/9 is not representable in binary floating point and the second form is
   wrong on every exact sign boundary — it puts 0° Gemini in Virgo instead of
@@ -224,12 +264,9 @@ Three things about this deployment are worth remembering:
   to improve their products. Submitted content here is birth data and personal
   questions. Use a paid tier, or Anthropic, if that matters for a given chart.
 - **Billing / wallet** — per-minute metering. Not started.
-- **Multi-user auth** — still single-user. Neither schema has a user column.
-  Note that `profiles` holds birth dates, times and places, which is
-  identifying personal data: `supabase_schema.sql` enables row level
-  security with no policies and revokes the PostgREST grants, so the table
-  is unreachable through the anon key. When adding auth, add a `user_id`
-  column and a policy — do not disable RLS to make something work.
+- **Account deletion** — a user cannot remove their own account and data.
+  Deleting an `app_users` row cascades to their profiles and readings, so
+  the mechanism exists; the route and the confirmation flow do not.
 - **Cusp sub-lord significator chains** — KP significator tables (which planets
   signify which houses via occupancy, ownership and star lord) are computed
   implicitly by the model rather than explicitly in code. Making this explicit

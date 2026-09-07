@@ -230,6 +230,52 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .hint{font-size:12px;color:var(--muted);margin-top:6px}
 .hint.warn{color:var(--sindoor)}
 
+/* ---------- sign-in gate ---------- */
+.gate{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+}
+.gate[hidden]{display:none}
+.gatecard{
+  max-width:440px;width:100%;background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:34px 30px;text-align:center;
+}
+.gatecard h1{font-family:var(--serif);font-weight:400;font-size:34px;margin:0 0 12px}
+.gatecard h1 .dot{color:var(--brass)}
+.gsub{font-size:14px;color:var(--muted);line-height:1.6;margin:0 0 22px}
+.gbtn{
+  background:var(--brass);border:0;color:var(--on-brass);font-weight:600;font-size:14.5px;
+  border-radius:4px;padding:11px 22px;width:100%;
+}
+.gbtn.ghost2{background:transparent;border:1px solid var(--line);color:var(--muted);font-weight:500}
+.gbtn.ghost2:hover{color:var(--text);border-color:var(--brass)}
+.gnote{font-size:12px;color:var(--muted);margin:14px 0 0}
+.gwait{
+  border:1px solid var(--line);border-left:3px solid var(--brass);border-radius:3px;
+  background:var(--panel-2);padding:14px 16px;font-size:14px;line-height:1.6;
+  text-align:left;margin-bottom:20px;
+}
+.acct{font-size:12px;color:var(--muted)}
+.linkbtn{
+  background:transparent;border:0;color:var(--muted);font-size:12px;
+  text-decoration:underline;padding:0 0 0 6px;
+}
+.linkbtn:hover{color:var(--text)}
+
+/* ---------- admin ---------- */
+.adminbox{margin-bottom:26px}
+.adminbox[hidden]{display:none}
+.admincount{font-size:12px;color:var(--muted);margin:0 0 8px}
+.utable{width:100%;border-collapse:collapse;font-size:12px}
+.utable td{padding:6px 6px 6px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+.utable tr:last-child td{border-bottom:0}
+.utable td:first-child{word-break:break-all}
+.ubtn{
+  background:transparent;border:1px solid var(--strong);color:var(--strong);
+  border-radius:3px;padding:3px 8px;font-size:11px;margin-right:4px;
+}
+.ubtn.bad{border-color:var(--weak);color:var(--weak)}
+.ubtn:disabled{opacity:.5}
+
 /* ---------- past readings ---------- */
 .history{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
 .history[hidden]{display:none}
@@ -321,11 +367,17 @@ details.raw pre{
 </style>
 </head>
 <body>
-<div class="wrap">
+
+<div class="gate" id="gate" hidden>
+  <div class="gatecard" id="gateBody"></div>
+</div>
+
+<div class="wrap" id="app" hidden>
 
   <header class="top">
     <div class="brand">Jyotish<span>.</span></div>
-    <div style="display:flex;align-items:center;gap:14px">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div class="acct" id="acct"></div>
       <div class="who" id="who"></div>
       <button class="themebtn" id="themeBtn" type="button">Dark</button>
     </div>
@@ -335,7 +387,13 @@ details.raw pre{
 
     <aside class="side">
       <section>
-        <h2>Whose chart</h2>
+        <section class="adminbox" id="adminBox" hidden>
+        <h2>Accounts</h2>
+        <p class="admincount" id="adminCount"></p>
+        <table class="utable"><tbody id="adminList"></tbody></table>
+      </section>
+
+      <h2>Whose chart</h2>
         <div id="profiles"></div>
         <button class="ghost" id="addBtn">Add a birth chart</button>
       </section>
@@ -473,6 +531,7 @@ details.raw pre{
   </div>
 </dialog>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let profiles = [], personas = [], pid = null, persona = 'integrated', history = [];
@@ -639,8 +698,12 @@ $('dlgSave').onclick = async () => {
   await boot(d.id);
 };
 
+// A chip fills the question; it does not send it. Sending on click meant a
+// curious tap on "Career" spent a full reading's worth of tokens before the
+// person had decided to ask anything. Every model call is now deliberate.
 document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
-  $('q').value = c.dataset.q; ask();
+  $('q').value = c.dataset.q;
+  $('q').focus();
 });
 $('send').onclick = ask;
 $('q').addEventListener('keydown', e => {
@@ -739,6 +802,186 @@ $('f_search').onclick = findPlace;
 $('f_place').addEventListener('keydown', e => {
   if(e.key === 'Enter'){ e.preventDefault(); findPlace(); }
 });
+
+// ---------- authentication ----------
+// Sign-in is Google through Supabase Auth. The browser holds the session; the
+// server verifies the token on every call and decides what this account may
+// see, so nothing here is a security boundary — hiding the admin panel is a
+// convenience, not a control.
+let sb = null, session = null, account = null, authEnabled = false;
+
+// Every same-origin /api/ call carries the token. Wrapping fetch once keeps
+// the header out of a dozen call sites, and means a call added later cannot
+// forget it.
+const _fetch = window.fetch.bind(window);
+window.fetch = (url, opts) => {
+  opts = opts || {};
+  if(typeof url === 'string' && url.startsWith('/api/') &&
+     session && session.access_token){
+    opts.headers = Object.assign({}, opts.headers,
+      {Authorization: 'Bearer ' + session.access_token});
+  }
+  return _fetch(url, opts);
+};
+
+function showGate(html){
+  $('gateBody').innerHTML = html;
+  $('gate').hidden = false;
+  $('app').hidden = true;
+}
+
+function showApp(){
+  $('gate').hidden = true;
+  $('app').hidden = false;
+}
+
+async function signIn(){
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin }
+  });
+  if(error) showGate(gateSignedOut(error.message));
+}
+
+async function signOut(){
+  if(sb) await sb.auth.signOut();
+  session = null; account = null;
+  showGate(gateSignedOut());
+}
+
+function gateSignedOut(err){
+  return '<h1>Jyotish<span class="dot">.</span></h1>' +
+    '<p class="gsub">Readings worked out from a real birth chart — the natal ' +
+    'positions, the running planetary period and today’s transits, ' +
+    'computed fresh for every question.</p>' +
+    (err ? '<div class="err">' + esc(err) + '</div>' : '') +
+    '<button class="gbtn" id="signinBtn">Sign in with Google</button>' +
+    '<p class="gnote">New accounts need to be approved before they can be used.</p>';
+}
+
+function gatePending(status, email){
+  const rejected = status === 'rejected';
+  return '<h1>Jyotish<span class="dot">.</span></h1>' +
+    '<p class="gsub">Signed in as <b>' + esc(email || '') + '</b></p>' +
+    '<div class="gwait">' +
+      (rejected
+        ? 'This account has not been given access.'
+        : 'Your account is waiting for approval. You will be able to add ' +
+          'charts and ask questions once an administrator approves it.') +
+    '</div>' +
+    '<button class="gbtn ghost2" id="signoutBtn">Sign out</button>';
+}
+
+async function initAuth(){
+  let config;
+  try{
+    config = await _fetch('/api/config').then(r => r.json());
+  }catch(e){
+    showGate('<h1>Jyotish<span class="dot">.</span></h1>' +
+      '<div class="err">The server could not be reached.</div>');
+    return false;
+  }
+
+  authEnabled = config.auth_enabled;
+
+  // No Supabase configured: the app runs open, as it does on a laptop.
+  if(!authEnabled){
+    showApp();
+    return true;
+  }
+
+  if(!window.supabase){
+    showGate('<h1>Jyotish<span class="dot">.</span></h1>' +
+      '<div class="err">The sign-in library could not be loaded. ' +
+      'Check your connection and reload.</div>');
+    return false;
+  }
+
+  sb = window.supabase.createClient(config.supabase_url, config.supabase_anon_key);
+  const { data } = await sb.auth.getSession();
+  session = data.session;
+
+  // Signing back in or out elsewhere in the browser should not leave a stale
+  // page holding a dead token.
+  sb.auth.onAuthStateChange((_event, s) => {
+    const had = !!session, has = !!s;
+    session = s;
+    if(had !== has) window.location.reload();
+  });
+
+  if(!session){
+    showGate(gateSignedOut());
+    document.getElementById('signinBtn').onclick = signIn;
+    return false;
+  }
+
+  account = await fetch('/api/me').then(r => r.json());
+  if(account.error){
+    showGate(gateSignedOut(account.error));
+    document.getElementById('signinBtn').onclick = signIn;
+    return false;
+  }
+
+  if(account.status !== 'approved' && account.status !== 'admin'){
+    showGate(gatePending(account.status, account.email));
+    document.getElementById('signoutBtn').onclick = signOut;
+    return false;
+  }
+
+  showApp();
+  $('acct').innerHTML = esc(account.email || '') +
+    ' <button class="linkbtn" id="signoutTop">Sign out</button>';
+  document.getElementById('signoutTop').onclick = signOut;
+  if(account.is_admin) $('adminBox').hidden = false;
+  return true;
+}
+
+// ---------- admin: the approval queue ----------
+const STATUS_ORDER = {pending: 0, approved: 1, admin: 2, rejected: 3};
+
+async function loadAdmin(){
+  if(!account || !account.is_admin) return;
+  try{
+    const users = await fetch('/api/admin/users').then(r => r.json());
+    if(users.error) throw new Error(users.error);
+
+    users.sort((a, b) =>
+      (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
+
+    const pending = users.filter(u => u.status === 'pending').length;
+    $('adminCount').textContent = pending
+      ? pending + (pending === 1 ? ' account waiting' : ' accounts waiting')
+      : 'No accounts waiting';
+
+    $('adminList').innerHTML = users.map(u => {
+      const self = u.id === account.id;
+      const actions = (u.status === 'admin' || self)
+        ? '<span class="num">—</span>'
+        : (u.status === 'approved'
+            ? '<button class="ubtn bad" data-id="' + esc(u.id) + '" data-status="rejected">Revoke</button>'
+            : '<button class="ubtn" data-id="' + esc(u.id) + '" data-status="approved">Approve</button>' +
+              (u.status === 'pending'
+                ? '<button class="ubtn bad" data-id="' + esc(u.id) + '" data-status="rejected">Reject</button>'
+                : ''));
+      return '<tr><td>' + esc(u.email) + (self ? ' <span class="tag neutral">you</span>' : '') +
+        '</td><td><span class="tag ' +
+        (u.status === 'pending' ? 'neutral' : (u.status === 'rejected' ? 'bad' : '')) +
+        '">' + esc(u.status) + '</span></td><td>' + actions + '</td></tr>';
+    }).join('');
+
+    document.querySelectorAll('#adminList .ubtn').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      await fetch('/api/admin/users/' + encodeURIComponent(b.dataset.id), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status: b.dataset.status})
+      });
+      loadAdmin();
+    });
+  }catch(e){
+    $('adminCount').textContent = 'Could not load accounts.';
+  }
+}
 
 // ---------- past readings ----------
 // Read back from the readings table rather than from the in-page conversation,
@@ -1050,10 +1293,19 @@ setChartStyle(chartStyle);
 async function boot(selectId){
   profiles = await (await fetch('/api/profiles')).json();
   personas = await (await fetch('/api/personas')).json();
+  if(profiles.error || personas.error) return;
   pid = selectId || (profiles[0] ? profiles[0].id : null);
   drawProfiles(); drawPersonas(); updateWho(); loadChart();
 }
-boot();
+
+(async () => {
+  // Nothing is fetched until the account is known to be approved, so a
+  // pending visitor cannot make the server do work on their behalf.
+  if(await initAuth()){
+    await boot();
+    loadAdmin();
+  }
+})();
 </script>
 </body>
 </html>

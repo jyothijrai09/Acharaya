@@ -82,3 +82,45 @@ revoke all on public.readings from anon, authenticated;
 
 comment on table public.readings is
     'Questions asked and answers given, per chart. Personal data: RLS on, no policies, no REST access.';
+
+
+-- ---------------------------------------------------------------------------
+-- Accounts, gated by admin approval.
+--
+-- id matches auth.users.id rather than being generated here, so a row is the
+-- application's view of a Supabase Auth identity. Signing in creates a row in
+-- 'pending'; nothing but the approval screen is reachable until an admin
+-- moves it to 'approved'.
+--
+-- 'admin' is never set through the application. Administrators come from the
+-- ADMIN_EMAILS environment variable, so the set of them is configuration
+-- rather than something a compromised session could grant itself — and so the
+-- first admin exists before any row does, which is what makes approving the
+-- very first user possible.
+-- ---------------------------------------------------------------------------
+create table if not exists public.app_users (
+    id          uuid primary key,
+    email       text not null unique,
+    status      text not null default 'pending'
+                check (status in ('pending', 'approved', 'admin', 'rejected')),
+    created_at  timestamptz default now(),
+    approved_at timestamptz,
+    approved_by uuid references public.app_users(id) on delete set null
+);
+
+-- Ownership. Nullable because rows predate authentication: charts saved
+-- before this existed have no owner, and are adopted by the first admin to
+-- sign in rather than being deleted or left unreachable.
+alter table public.profiles
+    add column if not exists user_id uuid references public.app_users(id) on delete cascade;
+
+create index if not exists profiles_user_idx on public.profiles (user_id);
+
+-- Readings are reached through their profile, so they inherit its ownership
+-- and need no column of their own.
+
+alter table public.app_users enable row level security;
+revoke all on public.app_users from anon, authenticated;
+
+comment on table public.app_users is
+    'Accounts. status gates access: pending until an admin approves. Personal data: RLS on, no policies, no REST access.';
