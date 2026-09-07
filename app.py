@@ -35,6 +35,7 @@ import auth
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
 from llm import (
     generate, current_model, ProviderError, PROVIDER, available_choices,
+    LAST_USAGE,
 )
 import geocode
 
@@ -169,6 +170,7 @@ def api_admin_usage():
         "provider": PROVIDER,
         "model": current_model(),
         "users": usage_summary(),
+        "last_call": dict(LAST_USAGE),
     })
 
 

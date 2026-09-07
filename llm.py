@@ -131,6 +131,12 @@ def _readable_provider_failure(exc, model):
 # invocations: a frozen or discarded instance takes its sockets with it.
 _clients = {}
 
+# Token counts from the most recent call, for the admin page. Not a running
+# total: it is a snapshot, and a serverless instance may serve one request
+# or a hundred, so it says what the last question cost rather than pretending
+# to bill.
+LAST_USAGE = {}
+
 
 def _gemini_client(key):
     if ("gemini", key) not in _clients:
@@ -166,15 +172,42 @@ def _generate_anthropic(system, messages, max_tokens, model=None):
             "Run: pip install anthropic"
         ) from e
 
+    # The system prompt is the persona plus the twenty-two rules, and it is
+    # byte-identical on every call for a given persona - about 5,000 tokens
+    # re-sent with every question. Marking it cached costs 1.25x once and
+    # 0.1x on every read after, so it pays for itself from the second
+    # question onward and saves roughly 90% of the input on all the rest.
+    #
+    # The chart block deliberately stays OUT of the cache: it is rebuilt from
+    # the ephemeris every call and changes as transits move, so it would
+    # never produce a hit and would only pay the write premium. It is sent
+    # after this breakpoint, which is exactly where volatile content belongs.
     try:
         response = client.messages.create(
             model=model or current_model(),
             max_tokens=max_tokens,
-            system=system,
+            system=[{
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }],
             messages=messages,
         )
     except Exception as e:
         raise _readable_provider_failure(e, model or current_model())
+
+    # Worth watching: if cache_read_input_tokens stays at zero across
+    # repeated questions, something is changing the prompt between calls and
+    # the discount is being paid for without being collected.
+    usage = getattr(response, 'usage', None)
+    if usage is not None:
+        LAST_USAGE.update({
+            'model': model or current_model(),
+            'input': getattr(usage, 'input_tokens', None),
+            'output': getattr(usage, 'output_tokens', None),
+            'cache_write': getattr(usage, 'cache_creation_input_tokens', None),
+            'cache_read': getattr(usage, 'cache_read_input_tokens', None),
+        })
     return "".join(b.text for b in response.content if b.type == "text")
 
 

@@ -168,6 +168,8 @@ header.top{
   color:var(--muted);margin:22px 0 10px;text-transform:uppercase;
 }
 .adminpage h3:first-child{margin-top:0}
+.limitnote .ok{color:var(--strong)}
+.limitnote .warn2{color:var(--weak)}
 .limitnote{
   font-size:12.5px;color:var(--muted);line-height:1.6;margin:0 0 4px;
   padding:11px 14px;border:1px solid var(--line);border-left:3px solid var(--brass);
@@ -604,6 +606,8 @@ details.raw pre{
       <div class="panel adminpage" id="panelAdmin" hidden>
         <h3>Limits</h3>
         <p class="limitnote" id="limitnote"></p>
+
+        <p class="limitnote" id="cachenote" hidden></p>
 
         <h3>Accounts</h3>
         <p class="admincount" id="adminCount"></p>
@@ -1173,6 +1177,26 @@ async function loadAdmin(){
         esc(usage.model) + '</b> (' + esc(usage.provider) + '). ' +
         'Change any of these with the DAILY_READING_LIMIT, REPLAYED_TURNS and ' +
         'ASTRO_MODEL environment variables in Vercel.';
+
+      // Cache health. The system prompt is identical every call, so after the
+      // first question the read should be large and the write zero. A read
+      // stuck at zero means something is changing the prompt between calls and
+      // the premium is being paid without the discount being collected.
+      const u = usage.last_call || {};
+      if(u.input !== undefined && u.input !== null){
+        const read = u.cache_read || 0, write = u.cache_write || 0;
+        $('cachenote').innerHTML =
+          'Last call on <b>' + esc(u.model || '?') + '</b>: ' +
+          u.input + ' input, ' + u.output + ' output, ' +
+          '<b>' + read + '</b> read from cache, ' + write + ' written to it.' +
+          (read > 0
+            ? ' <span class="ok">The system prompt is being served from cache.</span>'
+            : (write > 0
+                ? ' The cache was just written; the next question should read from it.'
+                : ' <span class="warn2">No cache activity \u2014 either this provider ' +
+                  'does not support it, or something is changing the prompt between calls.</span>'));
+        $('cachenote').hidden = false;
+      }
 
       $('usageList').innerHTML = (usage.users || []).map(u =>
         '<tr><td>' + esc(u.email) + '</td>' +
