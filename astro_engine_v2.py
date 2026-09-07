@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 # existing `from astro_engine_v2 import ...` imports keep working.
 import hora
 import remedies
+import strength
 import vargas
 from storage import (  # noqa: F401
     init_db, save_profile, list_profiles, get_profile, delete_profile, DB_PATH,
@@ -444,6 +445,10 @@ def compute_natal_chart(profile):
     # strained. None when nothing warrants one: an empty section is
     # better than a remedy invented to fill it.
     lal_kitab = remedies.build(planets)
+
+    # The three unambiguous strengths. Deliberately not a Shadbala total -
+    # see strength.py for why a partial one must not be presented as whole.
+    strengths = strength.compute(planets)
     kp_cusps = compute_kp_cusps(jd, profile['lat'], profile['lon'])
     dasha_timeline = compute_dasha_timeline(planets['Moon']['longitude'], utc_dt, levels=2)
     current_md, current_ad = get_current_mahadasha_antardasha(dasha_timeline)
@@ -460,6 +465,7 @@ def compute_natal_chart(profile):
         'navamsha': navamsha,
         'divisional': divisional,
         'lal_kitab': lal_kitab,
+        'strengths': strengths,
         'kp_cusps': kp_cusps,
         'dasha_timeline': dasha_timeline,
         'current_dasha': {'mahadasha': current_md, 'antardasha': current_ad},
@@ -519,8 +525,19 @@ def build_full_context(profile_id, here=None):
     natal = compute_natal_chart(profile)
     transit_time, transits = compute_transits(natal['natal_asc_lon'])
 
+    # Sade sati compares TRANSITING Saturn with the NATAL Moon, so it can
+    # only be worked out once both are in hand.
+    sadesati = None
+    try:
+        moon_sign = SIGNS.index(natal['planets']['Moon']['sign'])
+        saturn_sign = SIGNS.index(transits['Saturn']['sign'])
+        sadesati = strength.sade_sati(moon_sign, saturn_sign)
+    except (KeyError, ValueError):
+        pass
+
     context = {
         'natal_chart': natal,
+        'sade_sati': sadesati,
         'live_transits': {
             'as_of_utc': transit_time.isoformat(),
             'positions': transits
@@ -603,12 +620,36 @@ def context_to_prompt_text(context):
                      "which and that it can be shown \u2014 do not guess at "
                      "placements you have not been given.")
 
+    lines.extend(strength.to_prompt_lines(
+        n.get('strengths'), context.get('sade_sati'), SIGNS))
+
     lines.extend(remedies.to_prompt_lines(n.get('lal_kitab')))
 
     lines.append("\n-- KP House Cusps (Placidus) --")
     for house, c in n['kp_cusps'].items():
         lines.append(f"Cusp {house}: {c['sign']} {c['longitude']%30:.2f}° | {c['nakshatra']} | Star Lord: {c['star_lord']} | Sub Lord: {c['sub_lord']}")
-    lines.append(f"\n-- Current Dasha --\nMahadasha: {n['current_dasha']['mahadasha']} | Antardasha: {n['current_dasha']['antardasha']}")
+    cur = n['current_dasha']
+    md = next((m for m in n.get('dasha_timeline', [])
+               if m['mahadasha'] == cur['mahadasha']), None)
+    ad = None
+    if md:
+        ad = next((a for a in md.get('antardashas', [])
+                   if a['antardasha'] == cur['antardasha']), None)
+    lines.append("\n-- Current Dasha --")
+    lines.append(f"Mahadasha: {cur['mahadasha']}" +
+                 (f" | {md['start']} to {md['end']}" if md else ''))
+    lines.append(f"Antardasha: {cur['antardasha']}" +
+                 (f" | {ad['start']} to {ad['end']}" if ad else ''))
+    if md and md.get('antardashas'):
+        lines.append("Antardashas within this mahadasha:")
+        for a in md['antardashas']:
+            mark = '  <- running now' if a['antardasha'] == cur['antardasha'] else ''
+            lines.append(f"  {a['antardasha']}: {a['start']} to {a['end']}{mark}")
+    if n.get('dasha_timeline'):
+        lines.append("Full mahadasha sequence:")
+        for m in n['dasha_timeline']:
+            mark = '  <- running now' if m['mahadasha'] == cur['mahadasha'] else ''
+            lines.append(f"  {m['mahadasha']}: {m['start']} to {m['end']}{mark}")
     lines.append("\n-- Numerology --")
     num = n['numerology']
     lines.append(f"Life Path Number: {num['life_path_number']} | Birth Day Number (Mulank): {num['birth_day_number']}")
