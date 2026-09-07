@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 import hora
 import remedies
 import strength
+import yogas
 import vargas
 from storage import (  # noqa: F401
     init_db, save_profile, list_profiles, get_profile, delete_profile, DB_PATH,
@@ -452,6 +453,14 @@ def compute_natal_chart(profile):
     kp_cusps = compute_kp_cusps(jd, profile['lat'], profile['lon'])
     dasha_timeline = compute_dasha_timeline(planets['Moon']['longitude'], utc_dt, levels=2)
     current_md, current_ad = get_current_mahadasha_antardasha(dasha_timeline)
+
+    # Detected from the placements, never recalled. Built here rather than
+    # with the other chart data because each yoga carries the dasha windows
+    # that activate it, and those do not exist until the timeline does - a
+    # chart holding a yoga and that yoga mattering this year are different
+    # questions.
+    yoga_block = yogas.build(planets, asc_sign, dasha_timeline,
+                             {'mahadasha': current_md, 'antardasha': current_ad})
     numerology = compute_numerology(profile['year'], profile['month'], profile['day'],
                                      profile.get('full_birth_name') or profile['name'])
 
@@ -466,6 +475,7 @@ def compute_natal_chart(profile):
         'divisional': divisional,
         'lal_kitab': lal_kitab,
         'strengths': strengths,
+        'yogas': yoga_block,
         'kp_cusps': kp_cusps,
         'dasha_timeline': dasha_timeline,
         'current_dasha': {'mahadasha': current_md, 'antardasha': current_ad},
@@ -619,6 +629,8 @@ def context_to_prompt_text(context):
                      "block short. If a question turns on one of them, say "
                      "which and that it can be shown \u2014 do not guess at "
                      "placements you have not been given.")
+
+    lines.extend(yogas.to_prompt_lines(n.get('yogas')))
 
     lines.extend(strength.to_prompt_lines(
         n.get('strengths'), context.get('sade_sati'), SIGNS))
