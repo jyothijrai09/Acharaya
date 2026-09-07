@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consultation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0D1B21;
+  --panel:#14262E;
+  --panel-2:#1B3038;
+  --line:#24404A;
+  --brass:#D4A24C;
+  --sindoor:#D4574A;
+  --text:#E6EDEA;
+  --muted:#8CA3A8;
+  --serif:'Newsreader',Georgia,serif;
+  --sans:'IBM Plex Sans',system-ui,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--ink);
+  color:var(--text);
+  font-family:var(--sans);
+  font-size:15px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{
+  outline:2px solid var(--brass);outline-offset:2px;
+}
+
+/* ---------- shell ---------- */
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 80px}
+
+header.top{
+  display:flex;align-items:baseline;justify-content:space-between;
+  gap:20px;padding:26px 0 20px;border-bottom:1px solid var(--line);
+  flex-wrap:wrap;
+}
+.brand{font-family:var(--serif);font-size:27px;font-weight:400;letter-spacing:.01em}
+.brand span{color:var(--brass)}
+.who{font-size:13px;color:var(--muted)}
+.who b{color:var(--text);font-weight:500}
+
+/* ---------- layout ---------- */
+.cols{display:grid;grid-template-columns:270px 1fr;gap:34px;margin-top:26px;align-items:start}
+@media(max-width:860px){.cols{grid-template-columns:1fr;gap:24px}}
+
+/* ---------- sidebar ---------- */
+.side section{margin-bottom:26px}
+.side h2{
+  font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.04em;
+  color:var(--muted);margin:0 0 10px;
+}
+.profile{
+  width:100%;text-align:left;background:transparent;color:var(--text);
+  border:1px solid var(--line);border-radius:3px;padding:9px 11px;margin-bottom:6px;
+  display:block;transition:border-color .15s,background .15s;
+}
+.profile:hover{border-color:var(--brass)}
+.profile[aria-pressed="true"]{border-color:var(--brass);background:var(--panel)}
+.profile .nm{font-size:14px;font-weight:500}
+.profile .mt{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+
+.persona{
+  width:100%;text-align:left;background:transparent;color:var(--text);
+  border:1px solid var(--line);border-left:3px solid var(--line);
+  border-radius:2px;padding:10px 12px;margin-bottom:6px;display:block;
+  transition:border-color .15s,background .15s;
+}
+.persona:hover{border-left-color:var(--sindoor)}
+.persona[aria-pressed="true"]{border-left-color:var(--sindoor);background:var(--panel)}
+.persona .nm{font-family:var(--serif);font-size:17px;font-weight:400}
+.persona .sp{font-size:12px;color:var(--muted);margin-top:1px}
+
+.ghost{
+  background:transparent;border:1px dashed var(--line);color:var(--muted);
+  border-radius:3px;padding:8px 11px;width:100%;font-size:13px;
+}
+.ghost:hover{border-color:var(--brass);color:var(--text)}
+
+/* ---------- main ---------- */
+.ask{border:1px solid var(--line);border-radius:4px;background:var(--panel);padding:16px}
+.ask textarea{
+  width:100%;background:transparent;border:0;color:var(--text);
+  font-family:var(--serif);font-size:18px;line-height:1.5;resize:vertical;min-height:74px;
+}
+.ask textarea::placeholder{color:var(--muted);font-style:italic}
+.askbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{
+  background:transparent;border:1px solid var(--line);color:var(--muted);
+  border-radius:20px;padding:4px 11px;font-size:12px;
+}
+.chip:hover{border-color:var(--brass);color:var(--text)}
+.send{
+  background:var(--brass);border:0;color:var(--ink);font-weight:600;font-size:14px;
+  border-radius:3px;padding:9px 20px;
+}
+.send:disabled{opacity:.45;cursor:not-allowed}
+
+/* ---------- reading ---------- */
+.reading{margin-top:30px}
+.turn{margin-bottom:38px}
+.q{
+  font-family:var(--serif);font-size:20px;font-style:italic;color:var(--brass);
+  padding-left:14px;border-left:2px solid var(--brass);margin-bottom:20px;
+}
+.a{font-family:var(--serif);font-size:17.5px;line-height:1.72;max-width:70ch}
+.a p{margin:0 0 1.05em}
+.a h2,.a h3{
+  font-family:var(--sans);font-size:12.5px;font-weight:600;letter-spacing:.04em;
+  color:var(--muted);margin:2em 0 .7em;padding-bottom:5px;border-bottom:1px solid var(--line);
+}
+.a strong{color:var(--brass);font-weight:500}
+.a em{color:var(--text)}
+.a table{border-collapse:collapse;width:100%;margin:1.2em 0;font-family:var(--sans);font-size:13.5px}
+.a th{
+  text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;
+  letter-spacing:.03em;padding:7px 10px;border-bottom:1px solid var(--line);
+}
+.a td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.a td:first-child{font-family:var(--mono);font-size:12.5px;color:var(--brass);white-space:nowrap}
+.a ul{padding-left:1.1em}
+.a li{margin-bottom:.4em}
+.a hr{border:0;border-top:1px solid var(--line);margin:1.6em 0}
+
+.thinking{color:var(--muted);font-family:var(--serif);font-style:italic;font-size:17px}
+.thinking:after{content:'';animation:dots 1.4s steps(4,end) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}}
+@media (prefers-reduced-motion:reduce){.thinking:after{content:'...';animation:none}}
+
+.err{
+  border:1px solid var(--sindoor);border-left:3px solid var(--sindoor);
+  background:rgba(212,87,74,.08);padding:12px 14px;border-radius:3px;
+  font-size:14px;margin-bottom:20px;
+}
+.empty{
+  border:1px solid var(--line);border-radius:4px;padding:30px 26px;margin-top:30px;
+  font-family:var(--serif);font-size:17px;color:var(--muted);line-height:1.65;max-width:62ch;
+}
+
+/* ---------- chart drawer ---------- */
+details.chart{margin-top:34px;border-top:1px solid var(--line);padding-top:14px}
+details.chart summary{
+  cursor:pointer;font-size:12.5px;font-weight:600;letter-spacing:.03em;color:var(--muted);
+}
+details.chart summary:hover{color:var(--brass)}
+details.chart pre{
+  font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--muted);
+  background:var(--panel);border:1px solid var(--line);border-radius:3px;
+  padding:16px;overflow-x:auto;margin-top:12px;white-space:pre;
+}
+
+/* ---------- dialog ---------- */
+dialog{
+  background:var(--panel);color:var(--text);border:1px solid var(--line);
+  border-radius:5px;padding:24px;max-width:460px;width:calc(100% - 40px);
+}
+dialog::backdrop{background:rgba(5,12,15,.72)}
+dialog h3{font-family:var(--serif);font-weight:400;font-size:22px;margin:0 0 4px}
+dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.field input{
+  width:100%;background:var(--ink);border:1px solid var(--line);color:var(--text);
+  border-radius:3px;padding:8px 10px;font-family:var(--mono);font-size:13px;
+}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.dlgbar{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.cancel{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:3px;padding:8px 16px}
+.cancel:hover{color:var(--text);border-color:var(--brass)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">Jyotish<span>.</span></div>
+    <div class="who" id="who"></div>
+  </header>
+
+  <div class="cols">
+
+    <aside class="side">
+      <section>
+        <h2>Whose chart</h2>
+        <div id="profiles"></div>
+        <button class="ghost" id="addBtn">Add a birth chart</button>
+      </section>
+
+      <section>
+        <h2>Who you're asking</h2>
+        <div id="personas"></div>
+      </section>
+    </aside>
+
+    <main>
+      <div class="ask">
+        <textarea id="q" rows="3" placeholder="What would you like to ask?"></textarea>
+        <div class="askbar">
+          <div class="chips">
+            <button class="chip" data-q="Give me a reading for the week ahead.">This week</button>
+            <button class="chip" data-q="What does my chart say about my career and work right now?">Career</button>
+            <button class="chip" data-q="What does my chart say about money and finances at present?">Money</button>
+            <button class="chip" data-q="What is my current dasha period and what does it mean for me?">My period</button>
+          </div>
+          <button class="send" id="send">Ask</button>
+        </div>
+      </div>
+
+      <div id="err"></div>
+      <div class="reading" id="reading"></div>
+
+      <div class="empty" id="empty">
+        Choose whose chart you are reading and who you would like to ask, then put your
+        question above. Every answer is worked out fresh from the birth chart, the
+        current planetary period and today's transits — nothing is remembered or reused.
+      </div>
+
+      <details class="chart" id="chartBox" hidden>
+        <summary>See the calculations behind the reading</summary>
+        <pre id="chartText"></pre>
+      </details>
+    </main>
+
+  </div>
+</div>
+
+<dialog id="dlg">
+  <h3>Add a birth chart</h3>
+  <div class="sub">Birth time and place decide the ascendant and the house cusps, so they need to be as accurate as you can get them.</div>
+
+  <div class="field">
+    <label for="f_name">Name</label>
+    <input id="f_name" placeholder="Who this chart is for">
+  </div>
+  <div class="field">
+    <label for="f_full">Full name at birth — used for the numerology</label>
+    <input id="f_full" placeholder="Leave blank to use the name above">
+  </div>
+
+  <div class="field">
+    <label>Date of birth</label>
+    <div class="row3">
+      <input id="f_day" placeholder="DD" inputmode="numeric">
+      <input id="f_month" placeholder="MM" inputmode="numeric">
+      <input id="f_year" placeholder="YYYY" inputmode="numeric">
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Time of birth — 24 hour</label>
+    <div class="row">
+      <input id="f_hour" placeholder="HH" inputmode="numeric">
+      <input id="f_min" placeholder="MM" inputmode="numeric">
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="f_place">Place of birth</label>
+    <input id="f_place" placeholder="City, region, country">
+  </div>
+
+  <div class="field">
+    <label>Latitude, longitude and time zone offset at birth</label>
+    <div class="row3">
+      <input id="f_lat" placeholder="21.02" inputmode="decimal">
+      <input id="f_lon" placeholder="75.57" inputmode="decimal">
+      <input id="f_tz" placeholder="5.5" inputmode="decimal">
+    </div>
+  </div>
+
+  <div id="dlgErr"></div>
+  <div class="dlgbar">
+    <button class="cancel" id="dlgCancel">Cancel</button>
+    <button class="send" id="dlgSave">Save chart</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+let profiles = [], personas = [], pid = null, persona = 'integrated', history = [];
+
+// ---------- tiny markdown renderer ----------
+function md(src){
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const lines = esc(src).split('\n');
+  let out = '', i = 0;
+  while(i < lines.length){
+    let L = lines[i];
+
+    if(/^\s*\|/.test(L) && i+1 < lines.length && /^\s*\|[\s:|-]+\|?\s*$/.test(lines[i+1])){
+      const cells = r => r.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+      out += '<table><thead><tr>' + cells(L).map(c=>`<th>${inline(c)}</th>`).join('') + '</tr></thead><tbody>';
+      i += 2;
+      while(i < lines.length && /^\s*\|/.test(lines[i])){
+        out += '<tr>' + cells(lines[i]).map(c=>`<td>${inline(c)}</td>`).join('') + '</tr>';
+        i++;
+      }
+      out += '</tbody></table>';
+      continue;
+    }
+    if(/^#{1,6}\s/.test(L)){
+      out += `<h3>${inline(L.replace(/^#{1,6}\s/,''))}</h3>`; i++; continue;
+    }
+    if(/^\s*(---|\*\*\*)\s*$/.test(L)){ out += '<hr>'; i++; continue; }
+    if(/^\s*[-*]\s+/.test(L)){
+      out += '<ul>';
+      while(i < lines.length && /^\s*[-*]\s+/.test(lines[i])){
+        out += `<li>${inline(lines[i].replace(/^\s*[-*]\s+/,''))}</li>`; i++;
+      }
+      out += '</ul>'; continue;
+    }
+    if(L.trim() === ''){ i++; continue; }
+    let buf = [];
+    while(i < lines.length && lines[i].trim() !== '' && !/^\s*[-*]\s+/.test(lines[i])
+          && !/^#{1,6}\s/.test(lines[i]) && !/^\s*\|/.test(lines[i])
+          && !/^\s*(---|\*\*\*)\s*$/.test(lines[i])){
+      buf.push(lines[i]); i++;
+    }
+    if(buf.length) out += `<p>${inline(buf.join(' '))}</p>`;
+  }
+  return out;
+}
+function inline(s){
+  return s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+          .replace(/(^|[^*])\*([^*]+?)\*/g,'$1<em>$2</em>');
+}
+
+// ---------- rendering ----------
+function drawProfiles(){
+  $('profiles').innerHTML = profiles.map(p => `
+    <button class="profile" data-id="${p.id}" aria-pressed="${p.id===pid}">
+      <div class="nm">${p.name}</div>
+      <div class="mt">${p.date} · ${p.place}</div>
+    </button>`).join('') ||
+    '<div class="mt" style="color:var(--muted);font-size:13px;margin-bottom:8px">No charts saved yet.</div>';
+
+  document.querySelectorAll('.profile').forEach(b => b.onclick = () => {
+    pid = +b.dataset.id; history = []; $('reading').innerHTML = '';
+    drawProfiles(); updateWho(); loadChart();
+  });
+}
+
+function drawPersonas(){
+  $('personas').innerHTML = personas.map(p => `
+    <button class="persona" data-key="${p.key}" aria-pressed="${p.key===persona}">
+      <div class="nm">${p.name}</div>
+      <div class="sp">${p.specialty}</div>
+    </button>`).join('');
+  document.querySelectorAll('.persona').forEach(b => b.onclick = () => {
+    persona = b.dataset.key; history = []; drawPersonas(); updateWho();
+  });
+}
+
+function updateWho(){
+  const pr = profiles.find(p => p.id === pid);
+  const pe = personas.find(p => p.key === persona);
+  $('who').innerHTML = pr && pe
+    ? `Reading <b>${pr.name}</b>'s chart with <b>${pe.name}</b>`
+    : 'Choose a chart to begin';
+}
+
+async function loadChart(){
+  if(!pid){ $('chartBox').hidden = true; return; }
+  try{
+    const r = await fetch(`/api/chart/${pid}`);
+    const d = await r.json();
+    if(d.error) throw new Error(d.error);
+    $('chartText').textContent = d.text;
+    $('chartBox').hidden = false;
+  }catch(e){ $('chartBox').hidden = true; }
+}
+
+function showErr(msg){
+  $('err').innerHTML = msg ? `<div class="err">${msg}</div>` : '';
+}
+
+// ---------- asking ----------
+async function ask(){
+  const question = $('q').value.trim();
+  showErr('');
+  if(!pid){ showErr('Choose whose chart you are reading first.'); return; }
+  if(!question){ $('q').focus(); return; }
+
+  $('empty').hidden = true;
+  $('send').disabled = true;
+  $('q').value = '';
+
+  const turn = document.createElement('div');
+  turn.className = 'turn';
+  turn.innerHTML = `<div class="q">${question.replace(/</g,'&lt;')}</div><div class="a thinking">Reading the chart</div>`;
+  $('reading').appendChild(turn);
+  turn.scrollIntoView({behavior:'smooth', block:'start'});
+
+  try{
+    const r = await fetch('/api/ask', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({profile_id: pid, question, persona, history})
+    });
+    const d = await r.json();
+    if(d.error) throw new Error(d.error);
+    history = d.history;
+    turn.querySelector('.a').className = 'a';
+    turn.querySelector('.a').innerHTML = md(d.answer);
+    loadChart();
+  }catch(e){
+    turn.querySelector('.a').className = 'a';
+    turn.querySelector('.a').innerHTML = '';
+    showErr('The reading could not be completed: ' + e.message);
+  }finally{
+    $('send').disabled = false;
+  }
+}
+
+// ---------- add profile ----------
+$('addBtn').onclick = () => $('dlg').showModal();
+$('dlgCancel').onclick = () => $('dlg').close();
+
+$('dlgSave').onclick = async () => {
+  const body = {
+    name: $('f_name').value.trim(),
+    full_birth_name: $('f_full').value.trim(),
+    day: $('f_day').value, month: $('f_month').value, year: $('f_year').value,
+    hour: $('f_hour').value, minute: $('f_min').value,
+    place: $('f_place').value.trim(),
+    lat: $('f_lat').value, lon: $('f_lon').value, tz_offset: $('f_tz').value
+  };
+  const r = await fetch('/api/profiles', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if(d.error){
+    $('dlgErr').innerHTML = `<div class="err">${d.error}</div>`;
+    return;
+  }
+  $('dlgErr').innerHTML = '';
+  $('dlg').close();
+  await boot(d.id);
+};
+
+document.querySelectorAll('.chip').forEach(c => c.onclick = () => {
+  $('q').value = c.dataset.q; ask();
+});
+$('send').onclick = ask;
+$('q').addEventListener('keydown', e => {
+  if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) ask();
+});
+
+// ---------- boot ----------
+async function boot(selectId){
+  profiles = await (await fetch('/api/profiles')).json();
+  personas = await (await fetch('/api/personas')).json();
+  pid = selectId || (profiles[0] ? profiles[0].id : null);
+  drawProfiles(); drawPersonas(); updateWho(); loadChart();
+}
+boot();
+</script>
+</body>
+</html>
