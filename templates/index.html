@@ -139,6 +139,19 @@ header.top{
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
 
+/* ---------- horoscopes ---------- */
+.horohead{display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.horohead h2{font-family:var(--serif);font-weight:400;font-size:21px;margin:0}
+.horometa{font-size:12px;color:var(--muted);margin:0 0 16px;line-height:1.6}
+.horometa .fresh{color:var(--strong)}
+.horobody{font-family:var(--serif);font-size:17.5px;line-height:1.72;max-width:70ch}
+.regen{
+  background:transparent;border:1px solid var(--line);color:var(--muted);
+  border-radius:3px;padding:5px 11px;font-size:12px;
+}
+.regen:hover{border-color:var(--brass);color:var(--text)}
+.regen:disabled{opacity:.5}
+
 /* ---------- tabs ---------- */
 .tabs{
   display:flex;gap:2px;border-bottom:1px solid var(--line);
@@ -513,8 +526,17 @@ details.raw pre{
         <button class="tab" role="tab" data-panel="panelRead" aria-selected="true">Reading</button>
         <button class="tab" role="tab" data-panel="panelChart" aria-selected="false">The chart</button>
         <button class="tab" role="tab" data-panel="panelNow" aria-selected="false">Where you are now</button>
+        <button class="tab" role="tab" data-panel="panelDaily" aria-selected="false">Today</button>
+        <button class="tab" role="tab" data-panel="panelWeekly" aria-selected="false">This week</button>
+        <button class="tab" role="tab" data-panel="panelYearly" aria-selected="false">This year</button>
+        <button class="tab" role="tab" data-panel="panelLife" aria-selected="false">Life reading</button>
         <button class="tab" role="tab" data-panel="panelAdmin" aria-selected="false" id="tabAdmin" hidden>Admin<span class="pip" id="adminPip" hidden>0</span></button>
       </div>
+
+      <div class="panel" id="panelDaily" hidden data-kind="daily"></div>
+      <div class="panel" id="panelWeekly" hidden data-kind="weekly"></div>
+      <div class="panel" id="panelYearly" hidden data-kind="yearly"></div>
+      <div class="panel" id="panelLife" hidden data-kind="life"></div>
 
       <div class="panel" id="panelRead">
       <div class="conversation">
@@ -756,6 +778,9 @@ function drawProfiles(){
   document.querySelectorAll('.profile').forEach(b => b.onclick = () => {
     pid = +b.dataset.id; history = []; $('reading').innerHTML = '';
     $('empty').hidden = false;
+    document.querySelectorAll('.panel[data-kind]').forEach(p => p.innerHTML = '');
+    const open = document.getElementById(activeTab);
+    if(open && open.dataset.kind) loadHoroscope(open.dataset.kind, false);
     drawProfiles(); updateWho(); loadChart();
   });
 
@@ -1347,6 +1372,76 @@ async function loadHistory(){
   }
 }
 
+// ---------- horoscopes ----------
+// Each of these covers a PERIOD, so it only needs writing once for that
+// period: a life reading never changes and is kept forever, a yearly one is
+// rewritten when the year turns, a daily one the next day. Opening a tab reads
+// what is stored and costs nothing. Without that, four tabs would mean four
+// readings every time somebody looked.
+const HORO_TITLES = {
+  daily: 'Today', weekly: 'This week',
+  yearly: 'This year', life: 'Life reading'
+};
+const HORO_BLURB = {
+  daily: 'Written once a day. Reading it again today costs nothing.',
+  weekly: 'Written once a week. Reading it again this week costs nothing.',
+  yearly: 'Written once a year. Reading it again this year costs nothing.',
+  life: 'Written once and kept. A life reading does not change, so this is '
+      + 'never rewritten unless you ask.'
+};
+
+async function loadHoroscope(kind, refresh){
+  const panel = document.querySelector('.panel[data-kind="' + kind + '"]');
+  if(!panel) return;
+
+  if(!pid){
+    panel.innerHTML = '<p class="horometa">Choose a chart first.</p>';
+    return;
+  }
+
+  panel.innerHTML =
+    '<div class="horohead"><h2>' + esc(HORO_TITLES[kind]) + '</h2></div>' +
+    '<p class="horometa thinking">Reading the chart</p>';
+
+  const params = new URLSearchParams({persona});
+  if(chosenModel) params.set('model', chosenModel);
+  if(refresh) params.set('refresh', '1');
+  if(here){ params.set('lat', here.lat); params.set('lon', here.lon);
+            params.set('tz_offset', here.tz_offset ?? 0); }
+
+  try{
+    const d = await fetch('/api/horoscope/' + pid + '/' + kind + '?' + params)
+      .then(r => r.json());
+    if(d.error) throw new Error(d.error);
+
+    const when = d.created_at ? whenText(d.created_at) : '';
+    panel.innerHTML =
+      '<div class="horohead"><h2>' + esc(HORO_TITLES[kind]) + '</h2>' +
+      '<button type="button" class="regen" data-kind="' + kind + '">Write it again</button></div>' +
+      '<p class="horometa">' + esc(d.label || '') +
+        (when ? ' · written ' + esc(when) : '') +
+        (d.model ? ' · ' + esc(d.model) : '') +
+        (d.cached
+          ? ' · <span class="fresh">from the saved copy, no cost</span>'
+          : (typeof d.cost_usd === 'number'
+              ? ' · newly written, cost $' + d.cost_usd.toFixed(3)
+              : ' · newly written')) +
+        '<br>' + esc(HORO_BLURB[kind]) + '</p>' +
+      '<div class="horobody a">' + md(d.content) + '</div>';
+
+    panel.querySelector('.regen').onclick = (e) => {
+      if(!confirm('Write this again? The saved copy is replaced, and writing '
+                  + 'it costs a reading.')) return;
+      e.target.disabled = true;
+      loadHoroscope(kind, true);
+    };
+  }catch(e){
+    panel.innerHTML =
+      '<div class="horohead"><h2>' + esc(HORO_TITLES[kind]) + '</h2></div>' +
+      '<div class="err">' + esc(e.message) + '</div>';
+  }
+}
+
 // ---------- tabs ----------
 // Panels were stacked, so reaching the chart meant scrolling past a whole
 // conversation. Tabs keep each one a click away, and the choice is remembered
@@ -1368,6 +1463,10 @@ function showTab(id){
 
   if(id === 'panelNow') loadNow();
   if(id === 'panelAdmin') loadAdmin();
+  const panel = document.getElementById(id);
+  // Loaded on open rather than at boot: generating four horoscopes for a
+  // chart nobody looked at would be the exact waste the cache prevents.
+  if(panel && panel.dataset.kind) loadHoroscope(panel.dataset.kind, false);
 }
 
 document.querySelectorAll('.tab').forEach(b =>

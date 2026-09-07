@@ -30,7 +30,9 @@ from storage import (
     save_reading, list_readings, get_user, upsert_user, list_users,
     set_user_status, can_access_profile, adopt_orphan_profiles,
     count_readings_today, usage_summary, spend_today,
+    get_horoscope, save_horoscope, delete_horoscope,
 )
+import horoscopes
 import auth
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
 from llm import (
@@ -368,6 +370,83 @@ def api_ask():
     except ProviderError as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/horoscope/<int:pid>/<kind>")
+@require_user()
+def api_horoscope(pid, kind):
+    """A horoscope for one chart and one period.
+
+    Served from the cache when one exists, which is the normal case and
+    costs nothing. A model is called only on a miss - or when refresh=1
+    is passed, which is the querent explicitly choosing to pay again.
+
+    A life reading has the period key 'life', so it is written once and
+    then read forever."""
+    if kind not in horoscopes.KINDS:
+        return jsonify({"error": f"Unknown horoscope kind: {kind}"}), 400
+
+    denied = _require_profile(pid)
+    if denied:
+        return denied
+
+    key = horoscopes.period_key(kind)
+    refresh = request.args.get("refresh") in ("1", "true", "yes")
+
+    if refresh:
+        delete_horoscope(pid, kind, key)
+    else:
+        cached = get_horoscope(pid, kind, key)
+        if cached:
+            return jsonify({
+                "kind": kind, "period_key": key, "cached": True,
+                "label": horoscopes.describe(kind, key),
+                "content": cached["content"],
+                "model": cached["model"],
+                "created_at": str(cached["created_at"]),
+            })
+
+    # A miss costs money, so it is subject to the same budget as a
+    # question. Without this, four tabs would be four ways around the cap.
+    if DAILY_BUDGET_USD:
+        spent = spend_today()
+        if spent >= DAILY_BUDGET_USD:
+            return jsonify({
+                "error": f"Today's budget of ${DAILY_BUDGET_USD:.2f} is spent "
+                         f"(${spent:.2f}). This horoscope has not been written "
+                         f"yet, and writing it costs. It resets at midnight UTC.",
+            }), 429
+
+    persona = request.args.get("persona", "integrated")
+    if persona not in PERSONAS:
+        persona = "integrated"
+
+    try:
+        chart = build_chart_block(pid, here=_here_from_request())
+        model = request.args.get("model") or None
+        answer = generate(
+            system=build_system_prompt(persona),
+            messages=[{"role": "user",
+                       "content": f"{chart}\n\n{horoscopes.build_question(kind)}"}],
+            model=model,
+        )
+        used_model = model or current_model()
+        cost = cost_of(used_model, LAST_USAGE)
+        saved = save_horoscope(pid, kind, key, answer, persona=persona,
+                               provider=PROVIDER, model=used_model,
+                               cost_usd=cost)
+        return jsonify({
+            "kind": kind, "period_key": key, "cached": False,
+            "label": horoscopes.describe(kind, key),
+            "content": (saved or {}).get("content", answer),
+            "model": used_model, "cost_usd": cost,
+            "created_at": str((saved or {}).get("created_at", "")),
+        })
+    except ProviderError as e:
+        return jsonify({"error": str(e)}), 502
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
