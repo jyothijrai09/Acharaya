@@ -116,6 +116,11 @@ finally:
 
 check("gemini returns text", answer, "a reading")
 check("gemini gets the api key", captured["api_key"], "test-key")
+
+# The client must be held, not created as a temporary — an unreferenced client
+# can be collected mid-request, closing its transport ("Cannot send a request,
+# as the client has been closed").
+check("client is cached, not rebuilt per call", len(llm._clients), 1)
 check("gemini gets the model", captured["model"], "gemini-3.8-flash")
 check("system prompt passed through",
       captured["config"].system_instruction, "THE SYSTEM PROMPT")
@@ -149,11 +154,13 @@ class _BlockedClient:
 
 
 real_genai.Client = _BlockedClient
+llm._clients.clear()          # clients are cached per key; drop the fake above
 try:
     check_raises("blocked response surfaces reason",
                  lambda: llm.generate("sys", HISTORY), "SAFETY")
 finally:
     real_genai.Client = original_client
+    llm._clients.clear()
 
 # ---------------------------------------------------------------
 # 5. Anthropic wiring: roles left alone, system passed as its own argument.

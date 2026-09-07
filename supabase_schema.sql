@@ -47,3 +47,38 @@ revoke all on public.profiles from anon, authenticated;
 
 comment on table public.profiles is
     'Birth profiles for chart computation. Personal data: RLS on, no policies, no REST access. Reached only by the app''s direct Postgres connection.';
+
+
+-- ---------------------------------------------------------------------------
+-- Readings: the querent's own record of what was asked and what was answered.
+--
+-- Separate from the conversation history the model is sent. History gives the
+-- model continuity within a session; this is the durable record, and it stores
+-- what was said rather than the chart block that produced it.
+--
+-- provider and model are recorded per reading because they can change between
+-- questions (LLM_PROVIDER is an environment variable), and a reading is not
+-- comparable with another produced by a different model.
+-- ---------------------------------------------------------------------------
+create table if not exists public.readings (
+    id          bigint generated always as identity primary key,
+    profile_id  bigint not null references public.profiles(id) on delete cascade,
+    persona     text,
+    question    text not null,
+    answer      text not null,
+    provider    text,
+    model       text,
+    created_at  timestamptz default now()
+);
+
+create index if not exists readings_profile_idx
+    on public.readings (profile_id, id desc);
+
+-- Same reasoning as profiles: a reading quotes the birth chart and the
+-- querent's private questions, so it must not be reachable through the anon
+-- key. RLS on, no policies, PostgREST grants revoked.
+alter table public.readings enable row level security;
+revoke all on public.readings from anon, authenticated;
+
+comment on table public.readings is
+    'Questions asked and answers given, per chart. Personal data: RLS on, no policies, no REST access.';

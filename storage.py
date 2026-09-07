@@ -68,7 +68,15 @@ def _connect():
     if USE_POSTGRES:
         import psycopg  # imported lazily so local SQLite use needs no driver
         return psycopg.connect(DATABASE_URL)
-    return sqlite3.connect(DB_PATH)
+
+    conn = sqlite3.connect(DB_PATH)
+    # SQLite ignores REFERENCES ... ON DELETE CASCADE unless foreign keys are
+    # switched on, and the pragma is per-connection rather than per-database.
+    # Without this, deleting a profile silently leaves its readings behind as
+    # orphaned rows — personal data outliving the chart it belongs to, and a
+    # difference in behaviour from Postgres, which enforces the constraint.
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def _q(sql):
@@ -82,6 +90,32 @@ def _q(sql):
 
 
 # ---------------------------------------------------------------- schema
+
+_SQLITE_READINGS = """
+CREATE TABLE IF NOT EXISTS readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    persona TEXT,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    created_at TEXT
+)
+"""
+
+_POSTGRES_READINGS = """
+CREATE TABLE IF NOT EXISTS readings (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    profile_id BIGINT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    persona TEXT,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+)
+"""
 
 _SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -121,6 +155,7 @@ def init_db():
         with conn:
             cur = conn.cursor()
             cur.execute(_POSTGRES_SCHEMA if USE_POSTGRES else _SQLITE_SCHEMA)
+            cur.execute(_POSTGRES_READINGS if USE_POSTGRES else _SQLITE_READINGS)
 
             if not USE_POSTGRES:
                 # Migration safety for databases created before this column existed.
@@ -164,8 +199,58 @@ def save_profile(name, year, month, day, hour, minute, tz_offset,
         conn.close()
 
 
+def save_reading(profile_id, question, answer, persona=None,
+                 provider=None, model=None):
+    """Record one question and the answer given to it.
+
+    Kept deliberately separate from the conversation history the model is
+    sent. History exists to give the model continuity within a session; this
+    table is the querent's own record, and it stores what was actually said
+    rather than the chart block that produced it.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            cur = conn.cursor()
+            if USE_POSTGRES:
+                cur.execute(_q("""
+                    INSERT INTO readings
+                        (profile_id, persona, question, answer, provider, model)
+                    VALUES (?,?,?,?,?,?)
+                    RETURNING id
+                """), (profile_id, persona, question, answer, provider, model))
+                return cur.fetchone()[0]
+
+            cur.execute("""
+                INSERT INTO readings
+                    (profile_id, persona, question, answer, provider, model, created_at)
+                VALUES (?,?,?,?,?,?,?)
+            """, (profile_id, persona, question, answer, provider, model,
+                  datetime.utcnow().isoformat()))
+            return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def list_readings(profile_id, limit=50):
+    """Past readings for one profile, newest first."""
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(_q("""
+            SELECT id, persona, question, answer, provider, model, created_at
+            FROM readings WHERE profile_id=?
+            ORDER BY id DESC LIMIT ?
+        """), (profile_id, max(1, min(int(limit), 200))))
+        cols = ["id", "persona", "question", "answer", "provider", "model", "created_at"]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def delete_profile(profile_id):
-    """Remove a profile. Silent if the id does not exist."""
+    """Remove a profile and, by cascade, its readings.
+    Silent if the id does not exist."""
     conn = _connect()
     try:
         with conn:

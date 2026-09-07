@@ -25,6 +25,7 @@ from astro_engine_v2 import (
     init_db, save_profile, list_profiles, get_profile, delete_profile,
     build_full_context, context_to_prompt_text,
 )
+from storage import save_reading, list_readings
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
 from llm import generate, current_model, ProviderError, PROVIDER
 import geocode
@@ -124,6 +125,15 @@ def api_ask():
             messages=messages,
         )
 
+        # Recorded after the answer exists, so a failed call leaves no
+        # row. A storage failure must not lose a reading the querent is
+        # already reading, so it is logged rather than raised.
+        try:
+            save_reading(pid, question, answer, persona=persona,
+                         provider=PROVIDER, model=current_model())
+        except Exception:
+            traceback.print_exc()
+
         new_history = list(history) + [
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer},
@@ -133,6 +143,16 @@ def api_ask():
     except ProviderError as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/readings/<int:pid>")
+def api_readings(pid):
+    """Past questions and answers for one chart, newest first."""
+    try:
+        return jsonify(list_readings(pid))
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

@@ -69,6 +69,28 @@ OWN_SIGNS = {
     "Mercury":{"Gemini","Virgo"}, "Jupiter":{"Sagittarius","Pisces"},
     "Venus":{"Taurus","Libra"}, "Saturn":{"Capricorn","Aquarius"}
 }
+
+# Combustion orbs in degrees from the Sun (Parashari). Mercury and Venus take
+# a tighter orb when retrograde, which is why the value is a pair
+# (direct, retrograde) rather than a single number.
+#
+# These orbs vary between authorities by a degree or two. This set is the
+# common Parashari one; if a reading ever disagrees with a printed chart on a
+# borderline case, the orb table is the first thing to check.
+COMBUSTION_ORBS = {
+    "Moon": (12, 12), "Mars": (17, 17), "Mercury": (14, 12),
+    "Jupiter": (11, 11), "Venus": (10, 8), "Saturn": (15, 15),
+}
+
+# Rahu and Ketu are shadow points, not bodies: they are never combust, and
+# they are always retrograde, so flagging their motion says nothing useful.
+SHADOW_PLANETS = {"Rahu", "Ketu"}
+
+
+def angular_separation(a, b):
+    """Shortest distance between two zodiacal longitudes, 0-180 degrees."""
+    d = abs(a - b) % 360
+    return min(d, 360 - d)
 DASHA_ORDER = ["Ketu","Venus","Sun","Moon","Mars","Rahu","Jupiter","Saturn","Mercury"]
 DASHA_YEARS = {"Ketu":7,"Venus":20,"Sun":6,"Moon":10,"Mars":7,"Rahu":18,"Jupiter":16,"Saturn":19,"Mercury":17}
 TOTAL_YEARS = 120
@@ -158,10 +180,21 @@ def sidereal_longitude(jd, planet_id):
     result = swe.calc_ut(jd, planet_id, swe.FLG_SIDEREAL)
     return result[0][0]
 
+def sidereal_longitude_and_speed(jd, planet_id):
+    """Longitude plus daily motion. Negative motion is retrograde.
+
+    Retrogression is not cosmetic: a retrograde planet is read as holding its
+    significations back or turning them inward, and the reference chart's
+    Saturn is both exalted AND retrograde, which pull in opposite directions.
+    The model cannot infer this from a longitude, so it has to be computed.
+    """
+    result = swe.calc_ut(jd, planet_id, swe.FLG_SIDEREAL | swe.FLG_SPEED)
+    return result[0][0], result[0][3]
+
 def compute_planets(jd, asc_lon):
     data = {}
     for name, pid in PLANETS.items():
-        lon_p = sidereal_longitude(jd, pid)
+        lon_p, speed = sidereal_longitude_and_speed(jd, pid)
         sign = get_sign(lon_p)
         nak, pada = get_nakshatra_pada(lon_p)
         star_lord, sub_lord = get_kp_lords(lon_p)
@@ -169,7 +202,10 @@ def compute_planets(jd, asc_lon):
         data[name] = {
             'longitude': round(lon_p,2), 'sign': sign, 'degree': round(lon_p % 30,2),
             'nakshatra': nak, 'pada': pada, 'house': house,
-            'star_lord': star_lord, 'sub_lord': sub_lord
+            'star_lord': star_lord, 'sub_lord': sub_lord,
+            'dignity': get_dignity(name, sign),
+            'retrograde': (speed < 0) and name not in SHADOW_PLANETS,
+            'speed': round(speed, 4),
         }
     # Ketu
     rahu_lon = data['Rahu']['longitude']
@@ -180,8 +216,22 @@ def compute_planets(jd, asc_lon):
     data['Ketu'] = {
         'longitude': round(ketu_lon,2), 'sign': get_sign(ketu_lon), 'degree': round(ketu_lon % 30,2),
         'nakshatra': nak, 'pada': pada, 'house': house,
-        'star_lord': star_lord, 'sub_lord': sub_lord
+        'star_lord': star_lord, 'sub_lord': sub_lord,
+        'dignity': None, 'retrograde': False, 'speed': round(-data['Rahu']['speed'], 4),
     }
+
+    # Combustion needs every planet placed first, because it is measured from
+    # the Sun. Done in a second pass for that reason.
+    sun_lon = data['Sun']['longitude']
+    for name, p in data.items():
+        p['combust'] = False
+        p['sun_distance'] = round(angular_separation(p['longitude'], sun_lon), 2)
+        if name == 'Sun' or name in SHADOW_PLANETS:
+            continue
+        direct_orb, retro_orb = COMBUSTION_ORBS[name]
+        orb = retro_orb if p['retrograde'] else direct_orb
+        p['combust'] = p['sun_distance'] <= orb
+
     return data
 
 NAVAMSHA_SPAN = 30.0 / 9   # 3 degrees 20 minutes
@@ -415,7 +465,15 @@ def context_to_prompt_text(context):
     lines.append(f"Lagna: {n['lagna']['sign']} {n['lagna']['longitude']%30:.2f}° | Nakshatra: {n['lagna']['nakshatra']} Pada {n['lagna']['pada']}")
     lines.append("\n-- Planets (Vedic sign/house + KP star/sub lord) --")
     for name, p in n['planets'].items():
-        lines.append(f"{name}: {p['sign']} {p['degree']}° | House {p['house']} | {p['nakshatra']} Pada {p['pada']} | Star Lord: {p['star_lord']} | Sub Lord: {p['sub_lord']}")
+        marks = []
+        if p.get('dignity'):
+            marks.append(p['dignity'].upper())
+        if p.get('retrograde'):
+            marks.append('RETROGRADE')
+        if p.get('combust'):
+            marks.append(f"COMBUST ({p['sun_distance']}° from Sun)")
+        suffix = (' | ' + ' | '.join(marks)) if marks else ''
+        lines.append(f"{name}: {p['sign']} {p['degree']}° | House {p['house']} | {p['nakshatra']} Pada {p['pada']} | Star Lord: {p['star_lord']} | Sub Lord: {p['sub_lord']}{suffix}")
     d9 = n['navamsha']
     lines.append("\n-- D9 Navamsha (marriage, partnership, dharma, inner planetary strength) --")
     lines.append(f"D9 Lagna: {d9['lagna']['sign']} {d9['lagna']['degree']}° | Lord: {d9['lagna']['lord']}"

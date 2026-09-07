@@ -43,6 +43,36 @@ class ProviderError(RuntimeError):
     """Raised with an actionable message when a provider cannot answer."""
 
 
+# Clients are cached per key and kept alive for the life of the process.
+#
+# The cache is not only an optimisation. Written inline as
+# genai.Client(...).models.generate_content(...) the client is a temporary
+# with no reference held, so CPython may collect it as soon as the attribute
+# lookup completes — closing the pooled HTTP transport out from under the
+# in-flight request. That surfaces to the querent as the opaque
+# "Cannot send a request, as the client has been closed".
+#
+# Both SDKs document their clients as reusable and thread-safe, so holding one
+# is the intended usage, and it saves re-establishing TLS on every question.
+# Unlike a database connection this is safe to keep across serverless
+# invocations: a frozen or discarded instance takes its sockets with it.
+_clients = {}
+
+
+def _gemini_client(key):
+    if ("gemini", key) not in _clients:
+        from google import genai
+        _clients[("gemini", key)] = genai.Client(api_key=key)
+    return _clients[("gemini", key)]
+
+
+def _anthropic_client(key):
+    if ("anthropic", key) not in _clients:
+        from anthropic import Anthropic
+        _clients[("anthropic", key)] = Anthropic(api_key=key)
+    return _clients[("anthropic", key)]
+
+
 # ---------------------------------------------------------------- anthropic
 
 def _generate_anthropic(system, messages, max_tokens):
@@ -56,14 +86,14 @@ def _generate_anthropic(system, messages, max_tokens):
         )
 
     try:
-        from anthropic import Anthropic
+        client = _anthropic_client(key)
     except ImportError as e:
         raise ProviderError(
             "LLM_PROVIDER=anthropic but the anthropic package is not installed. "
             "Run: pip install anthropic"
         ) from e
 
-    response = Anthropic(api_key=key).messages.create(
+    response = client.messages.create(
         model=current_model(),
         max_tokens=max_tokens,
         system=system,
@@ -83,8 +113,8 @@ def _generate_gemini(system, messages, max_tokens):
         )
 
     try:
-        from google import genai
         from google.genai import types
+        client = _gemini_client(key)
     except ImportError as e:
         raise ProviderError(
             "LLM_PROVIDER=gemini but the google-genai package is not installed. "
@@ -101,7 +131,7 @@ def _generate_gemini(system, messages, max_tokens):
         for m in messages
     ]
 
-    response = genai.Client(api_key=key).models.generate_content(
+    response = client.models.generate_content(
         model=current_model(),
         contents=contents,
         config=types.GenerateContentConfig(

@@ -221,6 +221,77 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .hits .meta{display:block;font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:3px}
 .hint{font-size:12px;color:var(--muted);margin-top:6px}
 .hint.warn{color:var(--sindoor)}
+
+/* ---------- chart panel ---------- */
+.chartpanel{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
+.chartpanel[hidden]{display:none}
+.chead{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.chead h2{font-family:var(--serif);font-weight:400;font-size:21px;margin:0}
+.styletoggle{display:flex;gap:0;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.styletoggle button{
+  background:transparent;border:0;color:var(--muted);padding:6px 12px;font-size:12px;
+}
+.styletoggle button[aria-pressed="true"]{background:var(--panel-2);color:var(--text);font-weight:500}
+.styletoggle button:hover{color:var(--text)}
+
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.charts{grid-template-columns:1fr}}
+.chartcard{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px}
+.chartcard h3{
+  font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.04em;
+  color:var(--muted);margin:0 0 4px;text-transform:uppercase;
+}
+.chartcard .cap{font-size:12px;color:var(--muted);margin:0 0 10px}
+.chartcard svg{display:block;width:100%;height:auto}
+.kline{stroke:var(--line);stroke-width:1;fill:none}
+.kframe{stroke:var(--line);stroke-width:1.5;fill:none}
+.ksign{font-family:var(--mono);font-size:9px;fill:var(--muted)}
+.kplanet{font-family:var(--mono);font-size:10.5px;fill:var(--text)}
+.kplanet.vg{fill:var(--brass);font-weight:500}
+.kplanet.aff{fill:var(--sindoor)}
+.kretro{font-family:var(--mono);font-size:8px;fill:var(--muted)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:10px}
+.legend b{font-weight:500}
+.legend .sw{color:var(--brass)}
+.legend .sa{color:var(--sindoor)}
+.klagna{font-family:var(--mono);font-size:9px;fill:var(--sindoor);font-weight:500}
+
+/* ---------- detail tables ---------- */
+.details{margin-top:18px;display:grid;gap:16px}
+.dblock{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px}
+.dblock h3{
+  font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.04em;
+  color:var(--muted);margin:0 0 10px;text-transform:uppercase;
+}
+.dtable{width:100%;border-collapse:collapse;font-size:12.5px}
+.dtable th{
+  text-align:left;font-family:var(--sans);font-size:11px;font-weight:600;
+  color:var(--muted);letter-spacing:.03em;padding:0 10px 6px 0;border-bottom:1px solid var(--line);
+  white-space:nowrap;
+}
+.dtable td{padding:5px 10px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.dtable tr:last-child td{border-bottom:0}
+.dtable td:first-child{font-weight:500;white-space:nowrap}
+.dtable .num{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+.tag{
+  display:inline-block;font-family:var(--sans);font-size:10px;font-weight:600;
+  letter-spacing:.03em;padding:1px 6px;border-radius:2px;margin-left:5px;
+  border:1px solid var(--brass);color:var(--brass);
+}
+.tag.bad{border-color:var(--sindoor);color:var(--sindoor)}
+.scroll{overflow-x:auto}
+.pairs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;font-size:12.5px}
+.pairs div span{display:block;font-size:11px;color:var(--muted)}
+details.raw{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+details.raw summary{
+  cursor:pointer;font-size:12px;color:var(--muted);letter-spacing:.02em;list-style:none;
+}
+details.raw summary:hover{color:var(--brass)}
+details.raw pre{
+  margin:12px 0 0;padding:12px;background:var(--panel-2);border:1px solid var(--line);
+  border-radius:3px;font-family:var(--mono);font-size:11.5px;line-height:1.55;
+  white-space:pre-wrap;color:var(--muted);max-height:340px;overflow:auto;
+}
 </style>
 </head>
 <body>
@@ -273,10 +344,41 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
         current planetary period and today's transits — nothing is remembered or reused.
       </div>
 
-      <details class="chart" id="chartBox" hidden>
-        <summary>See the calculations behind the reading</summary>
-        <pre id="chartText"></pre>
-      </details>
+      <section class="chartpanel" id="chartBox" hidden>
+        <div class="chead">
+          <h2>The chart</h2>
+          <div class="styletoggle" role="group" aria-label="Chart style">
+            <button type="button" data-style="north" aria-pressed="true">North Indian</button>
+            <button type="button" data-style="south" aria-pressed="false">South Indian</button>
+          </div>
+        </div>
+
+        <div class="charts">
+          <div class="chartcard">
+            <h3>D1 &mdash; Rashi</h3>
+            <p class="cap" id="d1cap"></p>
+            <div id="d1chart"></div>
+          </div>
+          <div class="chartcard" id="d9card">
+            <h3>D9 &mdash; Navamsha</h3>
+            <p class="cap" id="d9cap"></p>
+            <div id="d9chart"></div>
+          </div>
+        </div>
+
+        <div class="legend">
+          <span><b class="sw">Brass</b> strengthened — vargottama, exalted or own sign</span>
+          <span><b class="sa">Red</b> afflicted — debilitated or combust</span>
+          <span><b>R</b> retrograde</span>
+        </div>
+
+        <div class="details" id="details"></div>
+
+        <details class="raw">
+          <summary>See the raw calculations sent to the astrologer</summary>
+          <pre id="chartText"></pre>
+        </details>
+      </section>
     </main>
 
   </div>
@@ -430,6 +532,8 @@ async function loadChart(){
     const d = await r.json();
     if(d.error) throw new Error(d.error);
     $('chartText').textContent = d.text;
+    lastChartRaw = d.raw;
+    renderCharts(d.raw);
     $('chartBox').hidden = false;
   }catch(e){ $('chartBox').hidden = true; }
 }
@@ -602,6 +706,263 @@ $('f_search').onclick = findPlace;
 $('f_place').addEventListener('keydown', e => {
   if(e.key === 'Enter'){ e.preventDefault(); findPlace(); }
 });
+
+// ---------- chart drawing ----------
+// Two conventions, both in use in India and not interchangeable:
+//   North Indian  houses are fixed on the page, signs rotate. Lagna is always
+//                 the top-centre diamond, and each house carries a sign NUMBER.
+//   South Indian  signs are fixed on the page, houses rotate. Aries is always
+//                 the second cell of the top row and the zodiac runs clockwise;
+//                 the lagna is marked in whichever cell its sign occupies.
+const SIGNS_UI = ['Aries','Taurus','Gemini','Cancer','Leo','Virgo',
+                  'Libra','Scorpio','Sagittarius','Capricorn','Aquarius','Pisces'];
+const ABBR = {Sun:'Su',Moon:'Mo',Mars:'Ma',Mercury:'Me',Jupiter:'Ju',
+              Venus:'Ve',Saturn:'Sa',Rahu:'Ra',Ketu:'Ke'};
+
+let chartStyle = 'north';
+try{ chartStyle = localStorage.getItem('jyotish-chartstyle') || 'north'; }catch(e){}
+
+const esc = s => String(s).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// House-region centroids of the North Indian figure, as fractions of the box.
+// The square carries both diagonals plus the diamond joining the side
+// midpoints, which cuts it into exactly twelve regions. Houses run
+// anticlockwise from the top-centre diamond.
+const NORTH = [
+  [.50,.27],[.25,.10],[.10,.25],[.27,.50],[.10,.75],[.25,.90],
+  [.50,.75],[.75,.90],[.90,.75],[.73,.50],[.90,.25],[.75,.10]
+];
+
+// South Indian grid: [row, col] for each sign, Aries first, running clockwise.
+const SOUTH = [
+  [0,1],[0,2],[0,3],[1,3],[2,3],[3,3],
+  [3,2],[3,1],[3,0],[2,0],[1,0],[0,0]
+];
+
+// Condition shows on the glyph itself, because a chart that omits it is
+// misleading: an exalted planet and a debilitated one look identical
+// otherwise. Brass = strengthened (vargottama, exalted, own sign),
+// red = afflicted (debilitated or combust), a trailing R = retrograde.
+function planetGlyph(name, p, vargottama){
+  const strong = vargottama.has(name) ||
+                 p.dignity === 'exalted' || p.dignity === 'own sign';
+  const weak = p.dignity === 'debilitated' || p.combust;
+  const cls = 'kplanet' + (weak ? ' aff' : (strong ? ' vg' : ''));
+  return '<tspan class="' + cls + '">' + esc(ABBR[name] || name.slice(0,2)) +
+         '</tspan>' + (p.retrograde ? '<tspan class="kretro">R</tspan>' : '');
+}
+
+function planetLines(names, planets, vargottama){
+  // Two abbreviations per line keeps long stacks inside their region.
+  const out = [];
+  for(let i = 0; i < names.length; i += 2){
+    out.push(names.slice(i, i + 2));
+  }
+  return out.map(pair => pair.map(n =>
+    planetGlyph(n, planets[n] || {}, vargottama)).join(' '));
+}
+
+function northChart(lagnaIdx, byHouse, planets, vargottama){
+  const S = 300, p = [];
+  p.push('<rect class="kframe" x="1" y="1" width="' + (S-2) + '" height="' + (S-2) + '"/>');
+  p.push('<path class="kline" d="M0 0 L' + S + ' ' + S + ' M' + S + ' 0 L0 ' + S + '"/>');
+  p.push('<path class="kline" d="M' + S/2 + ' 0 L' + S + ' ' + S/2 +
+         ' L' + S/2 + ' ' + S + ' L0 ' + S/2 + ' Z"/>');
+
+  for(let h = 1; h <= 12; h++){
+    const [fx, fy] = NORTH[h-1];
+    const x = fx * S, y = fy * S;
+    const signIdx = (lagnaIdx + h - 1) % 12;
+    // The sign number is what identifies the house in this convention.
+    p.push('<text class="ksign" x="' + x + '" y="' + (y - 16) +
+           '" text-anchor="middle">' + (signIdx + 1) + '</text>');
+    if(h === 1){
+      p.push('<text class="klagna" x="' + x + '" y="' + (y - 27) +
+             '" text-anchor="middle">La</text>');
+    }
+    const lines = planetLines(byHouse[h] || [], planets, vargottama);
+    lines.forEach((line, i) => {
+      p.push('<text x="' + x + '" y="' + (y - 2 + i * 13) +
+             '" text-anchor="middle">' + line + '</text>');
+    });
+  }
+  return '<svg viewBox="0 0 ' + S + ' ' + S + '" role="img" ' +
+         'aria-label="North Indian chart">' + p.join('') + '</svg>';
+}
+
+function southChart(lagnaIdx, bySign, planets, vargottama){
+  const S = 300, c = S / 4, p = [];
+  p.push('<rect class="kframe" x="1" y="1" width="' + (S-2) + '" height="' + (S-2) + '"/>');
+
+  for(let s = 0; s < 12; s++){
+    const [r, col] = SOUTH[s];
+    const x0 = col * c, y0 = r * c;
+    p.push('<rect class="kline" x="' + x0 + '" y="' + y0 +
+           '" width="' + c + '" height="' + c + '"/>');
+    p.push('<text class="ksign" x="' + (x0 + 4) + '" y="' + (y0 + 11) + '">' +
+           esc(SIGNS_UI[s].slice(0,3)) + '</text>');
+    if(s === lagnaIdx){
+      p.push('<text class="klagna" x="' + (x0 + c - 4) + '" y="' + (y0 + 11) +
+             '" text-anchor="end">La</text>');
+    }
+    const lines = planetLines(bySign[SIGNS_UI[s]] || [], planets, vargottama);
+    lines.forEach((line, i) => {
+      p.push('<text x="' + (x0 + c/2) + '" y="' + (y0 + 30 + i * 13) +
+             '" text-anchor="middle">' + line + '</text>');
+    });
+  }
+  return '<svg viewBox="0 0 ' + S + ' ' + S + '" role="img" ' +
+         'aria-label="South Indian chart">' + p.join('') + '</svg>';
+}
+
+function buildChart(lagnaSign, planets, vargottamaSet){
+  const lagnaIdx = SIGNS_UI.indexOf(lagnaSign);
+  const byHouse = {}, bySign = {};
+  Object.entries(planets).forEach(([name, p]) => {
+    (byHouse[p.house] = byHouse[p.house] || []).push(name);
+    (bySign[p.sign] = bySign[p.sign] || []).push(name);
+  });
+  return chartStyle === 'south'
+    ? southChart(lagnaIdx, bySign, planets, vargottamaSet)
+    : northChart(lagnaIdx, byHouse, planets, vargottamaSet);
+}
+
+// ---------- detail tables ----------
+function conditionTags(p, vargottama){
+  const t = [];
+  if(p.dignity)
+    t.push('<span class="tag' + (p.dignity === 'debilitated' ? ' bad' : '') + '">' +
+           esc(p.dignity) + '</span>');
+  if(p.retrograde) t.push('<span class="tag">retrograde</span>');
+  if(p.combust)
+    t.push('<span class="tag bad">combust ' +
+           (p.sun_distance !== undefined ? p.sun_distance + '&deg;' : '') + '</span>');
+  if(vargottama) t.push('<span class="tag">vargottama</span>');
+  return t.length ? t.join('') : '<span class="num">&mdash;</span>';
+}
+
+function planetTable(planets, vg){
+  const rows = Object.entries(planets).map(([n, p]) =>
+    '<tr><td>' + esc(n) + '</td>' +
+    '<td>' + esc(p.sign) + '</td>' +
+    '<td class="num">' + p.degree + '&deg;</td>' +
+    '<td class="num">' + p.house + '</td>' +
+    '<td>' + esc(p.nakshatra) + ' <span class="num">' + p.pada + '</span></td>' +
+    '<td>' + conditionTags(p, vg.has(n)) + '</td>' +
+    '<td>' + esc(p.star_lord) + '</td>' +
+    '<td>' + esc(p.sub_lord) + '</td></tr>').join('');
+  return '<div class="scroll"><table class="dtable"><thead><tr>' +
+    '<th>Planet</th><th>Sign</th><th>Deg</th><th>House</th>' +
+    '<th>Nakshatra</th><th>Condition</th><th>Star lord</th><th>Sub lord</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function navamshaTable(nav){
+  const rows = Object.entries(nav.planets).map(([n, p]) =>
+    '<tr><td>' + esc(n) + '</td>' +
+    '<td>' + esc(p.sign) +
+      (p.vargottama ? '<span class="tag">vargottama</span>' : '') + '</td>' +
+    '<td class="num">' + p.degree + '&deg;</td>' +
+    '<td class="num">' + p.house + '</td>' +
+    '<td>' + esc(p.lord) + '</td>' +
+    '<td>' + (p.dignity
+        ? '<span class="tag' + (p.dignity === 'debilitated' ? ' bad' : '') + '">' +
+          esc(p.dignity) + '</span>'
+        : '<span class="num">&mdash;</span>') + '</td></tr>').join('');
+  return '<div class="scroll"><table class="dtable"><thead><tr>' +
+    '<th>Planet</th><th>D9 sign</th><th>Deg</th><th>D9 house</th>' +
+    '<th>Lord</th><th>Dignity</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function cuspTable(cusps){
+  const rows = Object.entries(cusps).map(([h, c]) =>
+    '<tr><td>' + h + '</td><td>' + esc(c.sign) + '</td>' +
+    '<td class="num">' + (c.longitude % 30).toFixed(2) + '&deg;</td>' +
+    '<td>' + esc(c.nakshatra) + '</td>' +
+    '<td>' + esc(c.star_lord) + '</td><td>' + esc(c.sub_lord) + '</td></tr>').join('');
+  return '<div class="scroll"><table class="dtable"><thead><tr>' +
+    '<th>Cusp</th><th>Sign</th><th>Deg</th><th>Nakshatra</th>' +
+    '<th>Star lord</th><th>Sub lord</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+function dashaBlock(natal){
+  const cur = natal.current_dasha || {};
+  const md = (natal.dasha_timeline || []).find(m => m.mahadasha === cur.mahadasha);
+  let html = '<div class="pairs">' +
+    '<div><span>Mahadasha</span>' + esc(cur.mahadasha || '—') +
+      (md ? ' <span class="num">' + md.start + ' → ' + md.end + '</span>' : '') + '</div>' +
+    '<div><span>Antardasha</span>' + esc(cur.antardasha || '—') + '</div></div>';
+  if(md && md.antardashas){
+    html += '<div class="scroll" style="margin-top:12px"><table class="dtable">' +
+      '<thead><tr><th>Antardasha</th><th>From</th><th>To</th></tr></thead><tbody>' +
+      md.antardashas.map(a =>
+        '<tr><td>' + esc(a.antardasha) +
+        (a.antardasha === cur.antardasha ? '<span class="tag">now</span>' : '') +
+        '</td><td class="num">' + a.start + '</td>' +
+        '<td class="num">' + a.end + '</td></tr>').join('') +
+      '</tbody></table></div>';
+  }
+  return html;
+}
+
+function numerologyBlock(n){
+  const items = [
+    ['Life path', n.life_path_number],
+    ['Mulank (birth day)', n.birth_day_number],
+    ['Destiny', n.destiny_number],
+    ['Soul urge', n.soul_urge_number],
+    ['Personality', n.personality_number]
+  ].filter(x => x[1] !== undefined);
+  return '<div class="pairs">' + items.map(([k, v]) =>
+    '<div><span>' + esc(k) + '</span>' + v + '</div>').join('') + '</div>';
+}
+
+function renderCharts(raw){
+  const natal = raw.natal_chart;
+  const nav = natal.navamsha;
+  const vg = new Set(nav ? Object.entries(nav.planets)
+    .filter(([, p]) => p.vargottama).map(([n]) => n) : []);
+
+  $('d1chart').innerHTML = buildChart(natal.lagna.sign, natal.planets, vg);
+  $('d1cap').textContent = 'Lagna ' + natal.lagna.sign + ' ' +
+    (natal.lagna.longitude % 30).toFixed(2) + '°, ' +
+    natal.lagna.nakshatra + ' pada ' + natal.lagna.pada;
+
+  if(nav){
+    $('d9chart').innerHTML = buildChart(nav.lagna.sign, nav.planets, vg);
+    $('d9cap').textContent = 'D9 lagna ' + nav.lagna.sign +
+      ', lord ' + nav.lagna.lord + (nav.lagna.vargottama ? ' — vargottama' : '');
+    $('d9card').hidden = false;
+  }else{
+    $('d9card').hidden = true;
+  }
+
+  const blocks = [
+    ['Planets — D1', planetTable(natal.planets, vg)],
+    nav ? ['Navamsha — D9', navamshaTable(nav)] : null,
+    ['Vimshottari dasha', dashaBlock(natal)],
+    ['KP cusps (Placidus)', cuspTable(natal.kp_cusps)],
+    ['Numerology', numerologyBlock(natal.numerology)]
+  ].filter(Boolean);
+
+  $('details').innerHTML = blocks.map(([title, body]) =>
+    '<div class="dblock"><h3>' + esc(title) + '</h3>' + body + '</div>').join('');
+}
+
+function setChartStyle(style){
+  chartStyle = style;
+  try{ localStorage.setItem('jyotish-chartstyle', style); }catch(e){}
+  document.querySelectorAll('.styletoggle button').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.style === style)));
+  if(lastChartRaw) renderCharts(lastChartRaw);
+}
+let lastChartRaw = null;
+document.querySelectorAll('.styletoggle button').forEach(b =>
+  b.onclick = () => setChartStyle(b.dataset.style));
+setChartStyle(chartStyle);
 
 // ---------- boot ----------
 async function boot(selectId){

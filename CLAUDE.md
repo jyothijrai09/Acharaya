@@ -15,14 +15,16 @@ frontend.
 | `astro_personas.py` | The four personas and the 22 rules governing how they speak. The rules are the product — treat them as carefully as code. |
 | `app.py` | Flask server. REST API plus serves the UI. |
 | `templates/index.html` | The interface. Single file, no build step, vanilla JS. |
+| `geocode.py` | Place lookup. Nominatim for coordinates, timezonefinder + zoneinfo for the offset **at birth**. |
 | `llm.py` | Model provider layer. Anthropic or Gemini behind one `generate()`. The only module that talks to a model API. |
 | `storage.py` | Profile storage. SQLite locally, PostgreSQL when `DATABASE_URL` is set. The only module that talks to a database. |
-| `supabase_schema.sql` | Authoritative Postgres schema. Run once per Supabase project. |
+| `supabase_schema.sql` | Authoritative Postgres schema (`profiles`, `readings`). Run once per Supabase project. |
 | `api/index.py` | Vercel entry point. Re-exports the Flask app; holds no logic. |
 | `vercel.json` | Routes every path to the Flask app. |
 | `astro_profiles.db` | Local SQLite, created on first run. Saved birth charts. |
 | `test_navamsha.py` | D9 regression tests. Runs without an ephemeris — stubs swisseph. |
 | `test_llm.py` | Provider layer tests. Runs with no API key and neither SDK installed. |
+| `test_dignity.py` | Dignity, retrogression and combustion tests. No ephemeris needed. |
 
 ## Setup
 
@@ -46,7 +48,7 @@ string to use Postgres instead — the same code path serves both.
 `GET /api/model` reports which provider and model are actually answering.
 
 ```bash
-python3 test_navamsha.py && python3 test_llm.py
+python3 test_navamsha.py && python3 test_llm.py && python3 test_dignity.py
 ```
 
 ## Architecture
@@ -57,6 +59,7 @@ Birth details (SQLite)
 astro_engine_v2.build_full_context(profile_id)
     ├── compute_natal_chart()    sidereal positions, whole-sign houses,
     │                            nakshatras, padas, KP star/sub lords
+    ├── compute_planets()        also dignity, retrogression, combustion
     ├── compute_navamsha()       D9 signs, houses, lords, dignity,
     │                            vargottama flags
     ├── compute_kp_cusps()       Placidus cusps + cusp sub-lords
@@ -120,7 +123,7 @@ Born 2 March 1984, 06:45 IST (UTC+5:30), Jalgaon, Maharashtra (21.02N, 75.57E)
 
 Lagna              Aquarius 16.08°, Shatabhishak pada 3
 Sun/Moon/Mercury   all Aquarius, house 1, all in Shatabhishak
-Saturn             Libra, house 9, exalted, retrograde
+Saturn             Libra, house 9, exalted, retrograde (both now computed)
 Mars               Libra, house 9
 Jupiter            Sagittarius, house 11, own sign
 Venus              Capricorn, house 12
@@ -186,6 +189,19 @@ Three things about this deployment are worth remembering:
   turn's chart block and break the invariant above.
 - Gemini names the assistant role `model`. The translation lives in
   `llm.py`; the rest of the app speaks Anthropic's `user`/`assistant`.
+- Planetary condition is **computed, not inferred**. `compute_planets()`
+  returns `dignity`, `retrograde` and `combust` for every planet, and
+  `context_to_prompt_text()` renders them, so the personas are told rather
+  than left to work it out from a longitude. Rahu and Ketu carry neither
+  dignity nor combustion: they are shadow points, and the tradition does
+  not agree on their exaltation.
+- Combustion orbs live in `COMBUSTION_ORBS` and vary by a degree or two
+  between authorities. If a reading disagrees with a printed chart on a
+  borderline case, check that table first.
+- `storage.py` sets `PRAGMA foreign_keys = ON` per SQLite connection.
+  Without it SQLite ignores `ON DELETE CASCADE` and deleting a profile
+  leaves orphaned readings, which Postgres would not — the two backends
+  would silently disagree.
 - Navamsha is computed as `(longitude * 9) // 30`, never `longitude // (30/9)`.
   30/9 is not representable in binary floating point and the second form is
   wrong on every exact sign boundary — it puts 0° Gemini in Virgo instead of
