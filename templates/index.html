@@ -139,6 +139,41 @@ header.top{
 }
 .send:disabled{opacity:.45;cursor:not-allowed}
 
+/* ---------- tabs ---------- */
+.tabs{
+  display:flex;gap:2px;border-bottom:1px solid var(--line);
+  margin:22px 0 20px;overflow-x:auto;
+}
+.tab{
+  background:transparent;border:0;border-bottom:2px solid transparent;
+  color:var(--muted);padding:9px 15px;font-size:13px;font-weight:500;
+  white-space:nowrap;margin-bottom:-1px;
+}
+.tab:hover{color:var(--text)}
+.tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--brass)}
+.tab .pip{
+  display:inline-block;min-width:16px;padding:0 4px;margin-left:6px;
+  background:var(--brass);color:var(--on-brass);border-radius:9px;
+  font-size:10px;font-weight:700;line-height:16px;text-align:center;
+}
+.panel[hidden]{display:none}
+/* Panels sit inside the tab strip, so the section rules no longer need their
+   own top border and heading — the tab is the heading. */
+.panel > .nowbox,.panel > .chartpanel{margin-top:0;border-top:0;padding-top:0}
+.panel > .nowbox > h2,.panel > .chartpanel > .chead > h2{display:none}
+
+/* ---------- admin ---------- */
+.adminpage h3{
+  font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.04em;
+  color:var(--muted);margin:22px 0 10px;text-transform:uppercase;
+}
+.adminpage h3:first-child{margin-top:0}
+.limitnote{
+  font-size:12.5px;color:var(--muted);line-height:1.6;margin:0 0 4px;
+  padding:11px 14px;border:1px solid var(--line);border-left:3px solid var(--brass);
+  border-radius:3px;background:var(--panel-2);
+}
+
 /* ---------- where you are now ---------- */
 .nowbox{margin-top:34px;border-top:1px solid var(--line);padding-top:18px}
 .nowbox[hidden]{display:none}
@@ -455,13 +490,7 @@ details.raw pre{
 
     <aside class="side">
       <section>
-        <section class="adminbox" id="adminBox" hidden>
-        <h2>Accounts</h2>
-        <p class="admincount" id="adminCount"></p>
-        <table class="utable"><tbody id="adminList"></tbody></table>
-      </section>
-
-      <h2>Whose chart</h2>
+        <h2>Whose chart</h2>
         <div id="profiles"></div>
         <button class="ghost" id="addBtn">Add a birth chart</button>
       </section>
@@ -473,6 +502,14 @@ details.raw pre{
     </aside>
 
     <main>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-panel="panelRead" aria-selected="true">Reading</button>
+        <button class="tab" role="tab" data-panel="panelChart" aria-selected="false">The chart</button>
+        <button class="tab" role="tab" data-panel="panelNow" aria-selected="false">Where you are now</button>
+        <button class="tab" role="tab" data-panel="panelAdmin" aria-selected="false" id="tabAdmin" hidden>Admin<span class="pip" id="adminPip" hidden>0</span></button>
+      </div>
+
+      <div class="panel" id="panelRead">
       <div class="conversation">
         <div class="empty" id="empty">
           Choose whose chart you are reading and who you would like to ask, then put your
@@ -507,6 +544,9 @@ details.raw pre{
         </div>
       </div>
 
+      </div><!-- /panelRead -->
+
+      <div class="panel" id="panelNow" hidden>
       <section class="nowbox" id="nowbox" hidden>
         <h2>Where you are now</h2>
         <div class="nowctl">
@@ -518,6 +558,9 @@ details.raw pre{
         <div id="nowbody"></div>
       </section>
 
+      </div><!-- /panelNow -->
+
+      <div class="panel" id="panelChart" hidden>
       <section class="chartpanel" id="chartBox" hidden>
         <div class="chead">
           <h2>The chart</h2>
@@ -556,6 +599,24 @@ details.raw pre{
           <pre id="chartText"></pre>
         </details>
       </section>
+      </div><!-- /panelChart -->
+
+      <div class="panel adminpage" id="panelAdmin" hidden>
+        <h3>Limits</h3>
+        <p class="limitnote" id="limitnote"></p>
+
+        <h3>Accounts</h3>
+        <p class="admincount" id="adminCount"></p>
+        <table class="utable"><tbody id="adminList"></tbody></table>
+
+        <h3>Usage</h3>
+        <div class="scroll">
+          <table class="dtable"><thead><tr>
+            <th>Account</th><th>Status</th><th>Charts</th>
+            <th>Readings today</th><th>Readings total</th>
+          </tr></thead><tbody id="usageList"></tbody></table>
+        </div>
+      </div>
     </main>
 
   </div>
@@ -791,6 +852,11 @@ async function ask(){
         + 'Ask again, or try a different model.');
     }
     history = d.history || history;
+    if(typeof d.remaining_today === 'number'){
+      $('threadnote').textContent = d.remaining_today +
+        (d.remaining_today === 1 ? ' reading left today' : ' readings left today');
+      $('threadnote').hidden = false;
+    }
     turn.querySelector('.a').className = 'a';
     turn.querySelector('.a').innerHTML = md(d.answer);
     loadChart();
@@ -1081,7 +1147,7 @@ async function initAuth(){
   $('acct').innerHTML = esc(account.email || '') +
     ' <button class="linkbtn" id="signoutTop">Sign out</button>';
   document.getElementById('signoutTop').onclick = signOut;
-  if(account.is_admin) $('adminBox').hidden = false;
+  if(account.is_admin) $('tabAdmin').hidden = false;
   return true;
 }
 
@@ -1091,8 +1157,35 @@ const STATUS_ORDER = {pending: 0, approved: 1, admin: 2, rejected: 3};
 async function loadAdmin(){
   if(!account || !account.is_admin) return;
   try{
-    const users = await fetch('/api/admin/users').then(r => r.json());
+    const [users, usage] = await Promise.all([
+      fetch('/api/admin/users').then(r => r.json()),
+      fetch('/api/admin/usage').then(r => r.json()),
+    ]);
     if(users.error) throw new Error(users.error);
+
+    if(!usage.error){
+      $('limitnote').innerHTML =
+        (usage.daily_limit
+          ? '<b>' + usage.daily_limit + ' readings per account per day</b>, resetting at midnight UTC. '
+          : '<b>No daily cap is set.</b> ') +
+        'Administrators are exempt. The astrologer is told the last <b>' +
+        usage.replayed_turns + '</b> exchanges of a conversation. Default model: <b>' +
+        esc(usage.model) + '</b> (' + esc(usage.provider) + '). ' +
+        'Change any of these with the DAILY_READING_LIMIT, REPLAYED_TURNS and ' +
+        'ASTRO_MODEL environment variables in Vercel.';
+
+      $('usageList').innerHTML = (usage.users || []).map(u =>
+        '<tr><td>' + esc(u.email) + '</td>' +
+        '<td><span class="tag ' +
+          (u.status === 'pending' ? 'neutral' : (u.status === 'rejected' ? 'bad' : '')) +
+          '">' + esc(u.status) + '</span></td>' +
+        '<td class="num">' + u.charts + '</td>' +
+        '<td class="num">' + u.today +
+          (usage.daily_limit && u.status !== 'admin'
+            ? ' / ' + usage.daily_limit : '') + '</td>' +
+        '<td class="num">' + u.total + '</td></tr>').join('') ||
+        '<tr><td colspan="5" class="num">No accounts yet.</td></tr>';
+    }
 
     users.sort((a, b) =>
       (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
@@ -1101,6 +1194,9 @@ async function loadAdmin(){
     $('adminCount').textContent = pending
       ? pending + (pending === 1 ? ' account waiting' : ' accounts waiting')
       : 'No accounts waiting';
+    // A count on the tab, so a waiting account is visible without opening it.
+    $('adminPip').textContent = pending;
+    $('adminPip').hidden = !pending;
 
     $('adminList').innerHTML = users.map(u => {
       const self = u.id === account.id;
@@ -1195,6 +1291,32 @@ async function loadHistory(){
     $('reading').innerHTML = '';
   }
 }
+
+// ---------- tabs ----------
+// Panels were stacked, so reaching the chart meant scrolling past a whole
+// conversation. Tabs keep each one a click away, and the choice is remembered
+// so a reload does not send you back to the top of the reading.
+let activeTab = 'panelRead';
+try{ activeTab = localStorage.getItem('jyotish-tab') || 'panelRead'; }catch(e){}
+
+function showTab(id){
+  const tab = document.querySelector('.tab[data-panel="' + id + '"]');
+  // A remembered tab may no longer exist — Admin disappears when signing in
+  // as someone who is not one.
+  if(!tab || tab.hidden) id = 'panelRead';
+  activeTab = id;
+  try{ localStorage.setItem('jyotish-tab', id); }catch(e){}
+
+  document.querySelectorAll('.tab').forEach(b =>
+    b.setAttribute('aria-selected', String(b.dataset.panel === id)));
+  document.querySelectorAll('.panel').forEach(p => p.hidden = (p.id !== id));
+
+  if(id === 'panelNow') loadNow();
+  if(id === 'panelAdmin') loadAdmin();
+}
+
+document.querySelectorAll('.tab').forEach(b =>
+  b.onclick = () => showTab(b.dataset.panel));
 
 // ---------- where you are now ----------
 // The natal chart belongs to a birthplace; the sign rising this minute and the
@@ -1767,7 +1889,7 @@ async function boot(selectId){
     });
     await boot();
     loadModels();
-    loadNow();
+    showTab(activeTab);
     loadAdmin();
   }
 })();

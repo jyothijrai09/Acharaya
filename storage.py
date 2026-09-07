@@ -398,6 +398,67 @@ def save_reading(profile_id, question, answer, persona=None,
         conn.close()
 
 
+def _start_of_today():
+    """Midnight UTC today, in the type each backend stores.
+
+    SQLite keeps created_at as an ISO string, so the comparison there is
+    lexicographic and needs a string; PostgreSQL keeps a timestamptz and wants
+    a datetime. Getting this wrong compares a string to a timestamp and
+    silently counts nothing, which would make a cap that never triggers.
+    """
+    midnight = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight if USE_POSTGRES else midnight.isoformat()
+
+
+def count_readings_today(user_id):
+    """How many readings this account has asked for since midnight UTC.
+
+    Counted across all of their charts, because the cost is per question, not
+    per chart — otherwise adding a second chart would double the allowance.
+    """
+    if not user_id:
+        return 0
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(_q("""
+            SELECT COUNT(*) FROM readings r
+            JOIN profiles p ON r.profile_id = p.id
+            WHERE p.user_id = ? AND r.created_at >= ?
+        """), (str(user_id), _start_of_today()))
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        conn.close()
+
+
+def usage_summary():
+    """Per account: charts held, readings today, readings ever.
+
+    For the admin page — the point is to see who is spending the API budget
+    before the bill says so.
+    """
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(_q("""
+            SELECT u.id, u.email, u.status,
+                   (SELECT COUNT(*) FROM profiles p WHERE p.user_id = u.id),
+                   (SELECT COUNT(*) FROM readings r
+                      JOIN profiles p2 ON r.profile_id = p2.id
+                     WHERE p2.user_id = u.id AND r.created_at >= ?),
+                   (SELECT COUNT(*) FROM readings r2
+                      JOIN profiles p3 ON r2.profile_id = p3.id
+                     WHERE p3.user_id = u.id)
+              FROM app_users u
+             ORDER BY u.created_at DESC
+        """), (_start_of_today(),))
+        cols = ["id", "email", "status", "charts", "today", "total"]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def list_readings(profile_id, limit=50):
     """Past readings for one profile, newest first."""
     conn = _connect()

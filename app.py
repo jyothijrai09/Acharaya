@@ -29,6 +29,7 @@ from astro_engine_v2 import (
 from storage import (
     save_reading, list_readings, get_user, upsert_user, list_users,
     set_user_status, can_access_profile, adopt_orphan_profiles,
+    count_readings_today, usage_summary,
 )
 import auth
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
@@ -44,6 +45,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # question and its answer, so this is REPLAYED_TURNS * 2 messages. Three
 # keeps a follow-up coherent without the prompt growing without limit.
 REPLAYED_TURNS = int(os.environ.get('REPLAYED_TURNS', '3'))
+
+# Readings one account may ask for per day. This is the only limit that
+# stops a runaway BEFORE it reaches a provider - a spend cap at Anthropic or
+# a quota at Google both fire after the request has already been made and
+# paid for. Set to 0 to remove the cap.
+DAILY_READING_LIMIT = int(os.environ.get('DAILY_READING_LIMIT', '25'))
 
 app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 init_db()
@@ -120,6 +127,7 @@ def api_config():
     """
     return jsonify({
         "replayed_turns": REPLAYED_TURNS,
+        "daily_limit": DAILY_READING_LIMIT,
         "auth_enabled": auth.is_configured(),
         "supabase_url": auth.SUPABASE_URL,
         "supabase_anon_key": auth.SUPABASE_ANON_KEY,
@@ -149,6 +157,19 @@ def api_me():
 @require_user(admin_only=True)
 def api_admin_users():
     return jsonify(list_users())
+
+
+@app.get("/api/admin/usage")
+@require_user(admin_only=True)
+def api_admin_usage():
+    """Who is spending the API budget, before the bill says so."""
+    return jsonify({
+        "daily_limit": DAILY_READING_LIMIT,
+        "replayed_turns": REPLAYED_TURNS,
+        "provider": PROVIDER,
+        "model": current_model(),
+        "users": usage_summary(),
+    })
 
 
 @app.post("/api/admin/users/<user_id>")
@@ -264,6 +285,19 @@ def api_ask():
     denied = _require_profile(pid)
     if denied:
         return denied
+
+    # Checked before the model is called, not after: the point is to stop
+    # the spend, and an answer that is discarded has already been paid for.
+    # Admins are exempt, so a cap can never lock out the person who sets it.
+    if DAILY_READING_LIMIT and not g.is_admin:
+        used = count_readings_today(g.user_id)
+        if used >= DAILY_READING_LIMIT:
+            return jsonify({
+                "error": f"You have used all {DAILY_READING_LIMIT} readings for "
+                         f"today. The count resets at midnight UTC.",
+                "limit": DAILY_READING_LIMIT,
+                "used": used,
+            }), 429
     try:
         # Chart block is rebuilt fresh and attached to the current question
         # on every call — history is stored without it.
@@ -294,7 +328,11 @@ def api_ask():
             {"role": "user", "content": question},
             {"role": "assistant", "content": answer},
         ])[-(REPLAYED_TURNS * 2):]
-        return jsonify({"answer": answer, "history": new_history})
+        remaining = None
+        if DAILY_READING_LIMIT and not g.is_admin:
+            remaining = max(0, DAILY_READING_LIMIT - count_readings_today(g.user_id))
+        return jsonify({"answer": answer, "history": new_history,
+                        "remaining_today": remaining})
 
     except ProviderError as e:
         traceback.print_exc()
