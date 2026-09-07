@@ -11,8 +11,9 @@ Endpoints:
   POST /api/ask               -> ask a persona a question
 
 Run:
-    pip install flask anthropic pyswisseph
-    export ANTHROPIC_API_KEY=...
+    pip install -r requirements.txt
+    export ANTHROPIC_API_KEY=...          # or:
+    export LLM_PROVIDER=gemini GEMINI_API_KEY=...
     python3 app.py
 """
 
@@ -21,14 +22,16 @@ import traceback
 from flask import Flask, request, jsonify, render_template
 
 from astro_engine_v2 import (
-    init_db, save_profile, list_profiles, get_profile,
-    build_full_context, context_to_prompt_text, DB_PATH,
+    init_db, save_profile, list_profiles, get_profile, delete_profile,
+    build_full_context, context_to_prompt_text,
 )
 from astro_personas import PERSONAS, build_system_prompt, build_chart_block
+from llm import generate, current_model, ProviderError, PROVIDER
 
-import sqlite3
-
-app = Flask(__name__)
+# Absolute template path: on a serverless host the working directory is not
+# the repository root, so Flask's relative default fails to find them.
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'))
 init_db()
 
 
@@ -65,10 +68,7 @@ def api_create_profile():
 
 @app.delete("/api/profiles/<int:pid>")
 def api_delete_profile(pid):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM profiles WHERE id=?", (pid,))
-    conn.commit()
-    conn.close()
+    delete_profile(pid)
     return jsonify({"ok": True})
 
 
@@ -109,13 +109,7 @@ def api_ask():
         return jsonify({"error": "profile_id and question are required"}), 400
     if persona not in PERSONAS:
         return jsonify({"error": f"Unknown persona: {persona}"}), 400
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return jsonify({"error": "ANTHROPIC_API_KEY is not set on the server."}), 500
-
     try:
-        from anthropic import Anthropic
-        client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
         # Chart block is rebuilt fresh and attached to the current question
         # on every call — history is stored without it.
         messages = list(history)
@@ -124,13 +118,10 @@ def api_ask():
             "content": f"{build_chart_block(pid)}\n\nQuestion: {question}",
         })
 
-        resp = client.messages.create(
-            model=os.environ.get("ASTRO_MODEL", "claude-opus-4-6"),
-            max_tokens=4000,
+        answer = generate(
             system=build_system_prompt(persona),
             messages=messages,
         )
-        answer = "".join(b.text for b in resp.content if b.type == "text")
 
         new_history = list(history) + [
             {"role": "user", "content": question},
@@ -138,9 +129,19 @@ def api_ask():
         ]
         return jsonify({"answer": answer, "history": new_history})
 
+    except ProviderError as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/model")
+def api_model():
+    """Which provider and model are actually answering. Useful when
+    comparing readings between providers."""
+    return jsonify({"provider": PROVIDER, "model": current_model()})
 
 
 @app.get("/")

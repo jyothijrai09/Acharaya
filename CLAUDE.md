@@ -15,19 +15,39 @@ frontend.
 | `astro_personas.py` | The four personas and the 22 rules governing how they speak. The rules are the product — treat them as carefully as code. |
 | `app.py` | Flask server. REST API plus serves the UI. |
 | `templates/index.html` | The interface. Single file, no build step, vanilla JS. |
-| `astro_profiles.db` | SQLite, created on first run. Saved birth charts. |
+| `llm.py` | Model provider layer. Anthropic or Gemini behind one `generate()`. The only module that talks to a model API. |
+| `storage.py` | Profile storage. SQLite locally, PostgreSQL when `DATABASE_URL` is set. The only module that talks to a database. |
+| `supabase_schema.sql` | Authoritative Postgres schema. Run once per Supabase project. |
+| `api/index.py` | Vercel entry point. Re-exports the Flask app; holds no logic. |
+| `vercel.json` | Routes every path to the Flask app. |
+| `astro_profiles.db` | Local SQLite, created on first run. Saved birth charts. |
 | `test_navamsha.py` | D9 regression tests. Runs without an ephemeris — stubs swisseph. |
+| `test_llm.py` | Provider layer tests. Runs with no API key and neither SDK installed. |
 
 ## Setup
 
 ```bash
-pip install flask anthropic pyswisseph
+pip install -r requirements.txt
 export ANTHROPIC_API_KEY=sk-ant-...
 python3 app.py          # http://localhost:5000
 ```
 
-Optional: `export ASTRO_MODEL=claude-sonnet-4-6` (default is Opus — better readings,
-higher cost per call).
+Or on Gemini's free tier:
+
+```bash
+export LLM_PROVIDER=gemini GEMINI_API_KEY=...
+python3 app.py
+```
+
+With no `DATABASE_URL`, profiles go to a local SQLite file and no Postgres
+driver or network is needed. Set `DATABASE_URL` to a Supabase connection
+string to use Postgres instead — the same code path serves both.
+
+`GET /api/model` reports which provider and model are actually answering.
+
+```bash
+python3 test_navamsha.py && python3 test_llm.py
+```
 
 ## Architecture
 
@@ -48,7 +68,8 @@ context_to_prompt_text()         renders it all as structured text
     ↓
 astro_personas.build_chart_block()   wraps in <computed_chart_data> tags
     ↓
-Claude API call with build_system_prompt(persona) as system
+llm.generate(system=build_system_prompt(persona), messages=...)
+    └── LLM_PROVIDER selects Anthropic or Gemini
 ```
 
 ## The one invariant that must not be broken
@@ -114,6 +135,40 @@ D9 Lagna           Aquarius — vargottama (same sign in D1 and D9)
 Verified against a Parashara's Light 9.0 report. Dasha dates carry roughly two
 days' drift from that report — acceptable, but do not let it grow.
 
+## Deployment
+
+Vercel (project `acharaya`) builds from `main`; Supabase project
+`AcharayaVedic` holds the profiles table.
+
+Environment variables required on Vercel:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Supabase **transaction pooler** string, port 6543 |
+| `ANTHROPIC_API_KEY` | required when `LLM_PROVIDER` is `anthropic` (the default) |
+| `GEMINI_API_KEY` | required when `LLM_PROVIDER=gemini` |
+| `LLM_PROVIDER` | optional, `anthropic` (default) or `gemini` |
+| `ASTRO_MODEL` | optional, overrides the provider's default model |
+| `LLM_MAX_TOKENS` | optional, defaults to 4000 |
+
+Use the pooler on port 6543, not the direct connection on 5432. Serverless
+invocations open a connection per call, and direct connections exhaust
+Postgres' connection limit under any real traffic.
+
+Three things about this deployment are worth remembering:
+
+- **The filesystem is ephemeral.** Anything written to disk at runtime is
+  discarded. That is why `storage.py` exists: a SQLite file would appear to
+  work and then silently lose every saved chart.
+- **No ephemeris data files are shipped.** `swe.set_ephe_path()` is skipped
+  when the directory is absent and pyswisseph falls back to its built-in
+  Moshier ephemeris. Slightly less precise — watch the dasha drift budget
+  below.
+- **60 second function ceiling** on the Hobby plan (`vercel.json`). A full
+  eight-section Opus reading can approach it. If readings start timing out,
+  stream the response or move to a host without the ceiling rather than
+  trimming the rules.
+
 ## Conventions
 
 - Lahiri ayanamsa throughout (`swe.SIDM_LAHIRI`). Do not change — it is the
@@ -122,6 +177,15 @@ days' drift from that report — acceptable, but do not let it grow.
   genuinely different house systems used side by side; that is correct, not a bug.
 - Time zone offsets are stored as the offset **at the time of birth**, not the
   modern offset for that location.
+- All database access goes through `storage.py`, and all model calls go
+  through `llm.py`. Nothing else imports `sqlite3`, `psycopg`, `anthropic`
+  or `google.genai`, so the backends cannot drift apart.
+- Both providers are called STATELESSLY — the whole conversation is sent
+  every turn. Gemini's Interactions API offers server-side history via
+  `previous_interaction_id`; do not use it. It would retain the first
+  turn's chart block and break the invariant above.
+- Gemini names the assistant role `model`. The translation lives in
+  `llm.py`; the rest of the app speaks Anthropic's `user`/`assistant`.
 - Navamsha is computed as `(longitude * 9) // 30`, never `longitude // (30/9)`.
   30/9 is not representable in binary floating point and the second form is
   wrong on every exact sign boundary — it puts 0° Gemini in Virgo instead of
@@ -138,10 +202,18 @@ days' drift from that report — acceptable, but do not let it grow.
   valuable next addition, and `compute_navamsha()` is the pattern to copy —
   a D10 is the same arithmetic with a different divisor and starting rule.
 - **Voice mode** — speech-to-text and text-to-speech, per the original AstroSage
-  reference. Not started.
+  reference. Not started. Gemini's Live API would be the obvious route if the
+  app is already on `LLM_PROVIDER=gemini`.
+- **Free-tier privacy** — Google's free tier permits using submitted content
+  to improve their products. Submitted content here is birth data and personal
+  questions. Use a paid tier, or Anthropic, if that matters for a given chart.
 - **Billing / wallet** — per-minute metering. Not started.
-- **Multi-user auth** — currently single-user local. The SQLite schema has no
-  user column yet.
+- **Multi-user auth** — still single-user. Neither schema has a user column.
+  Note that `profiles` holds birth dates, times and places, which is
+  identifying personal data: `supabase_schema.sql` enables row level
+  security with no policies and revokes the PostgREST grants, so the table
+  is unreachable through the anon key. When adding auth, add a `user_id`
+  column and a policy — do not disable RLS to make something work.
 - **Cusp sub-lord significator chains** — KP significator tables (which planets
   signify which houses via occupancy, ownership and star lord) are computed
   implicitly by the model rather than explicitly in code. Making this explicit

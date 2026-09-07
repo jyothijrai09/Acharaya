@@ -11,15 +11,28 @@ Astrology Engine v2
   no shortcuts, no answering from a cached "vibe" of the chart.
 """
 
+import os
 import swisseph as swe
-import sqlite3
-import json
 from datetime import datetime, timedelta
 
-swe.set_ephe_path('/usr/share/ephe')
-swe.set_sid_mode(swe.SIDM_LAHIRI)
+# Profile storage lives in storage.py, which speaks SQLite locally and
+# PostgreSQL (Supabase) when DATABASE_URL is set. Re-exported here so that
+# existing `from astro_engine_v2 import ...` imports keep working.
+from storage import (  # noqa: F401
+    init_db, save_profile, list_profiles, get_profile, delete_profile, DB_PATH,
+)
 
-DB_PATH = "/home/claude/astro_profiles.db"
+# Swiss Ephemeris data files. If the directory is absent - as it is on a
+# serverless host - pyswisseph falls back to its built-in Moshier ephemeris,
+# which needs no data files but is marginally less precise. That matters
+# here: CLAUDE.md allows about two days of dasha drift against Parashara's
+# Light, and the fallback eats into that budget. Ship the data files and
+# point SWISSEPH_PATH at them if the drift ever grows.
+EPHE_PATH = os.environ.get('SWISSEPH_PATH', '/usr/share/ephe')
+if os.path.isdir(EPHE_PATH):
+    swe.set_ephe_path(EPHE_PATH)
+
+swe.set_sid_mode(swe.SIDM_LAHIRI)
 
 PLANETS = {
     'Sun': swe.SUN, 'Moon': swe.MOON, 'Mars': swe.MARS,
@@ -109,52 +122,6 @@ def compute_numerology(year, month, day, full_name=None):
         result['soul_urge_number'] = name_number(full_name, 'soul_urge')
         result['personality_number'] = name_number(full_name, 'personality')
     return result
-
-# ---------------- DB SETUP ----------------
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            full_birth_name TEXT,
-            year INTEGER, month INTEGER, day INTEGER,
-            hour INTEGER, minute INTEGER,
-            tz_offset REAL, lat REAL, lon REAL, place TEXT,
-            created_at TEXT
-        )
-    """)
-    # Migration safety: add full_birth_name if the table pre-existed without it
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(profiles)")]
-    if 'full_birth_name' not in cols:
-        conn.execute("ALTER TABLE profiles ADD COLUMN full_birth_name TEXT")
-    conn.commit()
-    conn.close()
-
-def save_profile(name, year, month, day, hour, minute, tz_offset, lat, lon, place, full_birth_name=None):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.execute("""
-        INSERT INTO profiles (name, full_birth_name, year, month, day, hour, minute, tz_offset, lat, lon, place, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    """, (name, full_birth_name or name, year, month, day, hour, minute, tz_offset, lat, lon, place, datetime.utcnow().isoformat()))
-    conn.commit()
-    profile_id = cur.lastrowid
-    conn.close()
-    return profile_id
-
-def list_profiles():
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("SELECT id, name, place, year, month, day FROM profiles").fetchall()
-    conn.close()
-    return rows
-
-def get_profile(profile_id):
-    conn = sqlite3.connect(DB_PATH)
-    row = conn.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
-    cols = [d[0] for d in conn.execute("SELECT * FROM profiles").description]
-    conn.close()
-    return dict(zip(cols, row)) if row else None
 
 # ---------------- CORE ASTRO MATH ----------------
 
@@ -495,5 +462,8 @@ if __name__ == "__main__":
     prompt_text = context_to_prompt_text(ctx)
     print("\n" + prompt_text)
 
-    with open("/home/claude/sample_context.txt", "w") as f:
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "sample_context.txt")
+    with open(out, "w", encoding="utf-8") as f:
         f.write(prompt_text)
+    print("\nWrote", out)
