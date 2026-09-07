@@ -21,6 +21,12 @@
   --sindoor:#A8382A;
   --text:#1B2A2F;
   --muted:#5F7176;
+  /* Planetary condition needs two colours that stay apart at 10px, on
+     both grounds. Brass against sindoor failed that — both read brown.
+     Blue against red separates by hue AND lightness, and survives the
+     red-green colour blindness that a green/red pair would not. */
+  --strong:#0A6C93;
+  --weak:#C0392B;
   --serif:'Newsreader',Georgia,serif;
   --sans:'IBM Plex Sans',system-ui,sans-serif;
   --mono:'IBM Plex Mono',ui-monospace,monospace;
@@ -35,6 +41,8 @@
   --sindoor:#D4574A;
   --text:#E6EDEA;
   --muted:#8CA3A8;
+  --strong:#6BC6E8;
+  --weak:#F2867B;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -264,13 +272,13 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .kframe{stroke:var(--line);stroke-width:1.5;fill:none}
 .ksign{font-family:var(--mono);font-size:9px;fill:var(--muted)}
 .kplanet{font-family:var(--mono);font-size:10.5px;fill:var(--text)}
-.kplanet.vg{fill:var(--brass);font-weight:500}
-.kplanet.aff{fill:var(--sindoor)}
+.kplanet.vg{fill:var(--strong);font-weight:600}
+.kplanet.aff{fill:var(--weak);font-weight:600}
 .kretro{font-family:var(--mono);font-size:8px;fill:var(--muted)}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:10px}
 .legend b{font-weight:500}
-.legend .sw{color:var(--brass)}
-.legend .sa{color:var(--sindoor)}
+.legend .sw{color:var(--strong)}
+.legend .sa{color:var(--weak)}
 .klagna{font-family:var(--mono);font-size:9px;fill:var(--sindoor);font-weight:500}
 
 /* ---------- detail tables ---------- */
@@ -293,9 +301,10 @@ dialog .sub{font-size:13px;color:var(--muted);margin-bottom:18px}
 .tag{
   display:inline-block;font-family:var(--sans);font-size:10px;font-weight:600;
   letter-spacing:.03em;padding:1px 6px;border-radius:2px;margin-left:5px;
-  border:1px solid var(--brass);color:var(--brass);
+  border:1px solid var(--strong);color:var(--strong);
 }
-.tag.bad{border-color:var(--sindoor);color:var(--sindoor)}
+.tag.bad{border-color:var(--weak);color:var(--weak)}
+.tag.neutral{border-color:var(--muted);color:var(--muted)}
 .scroll{overflow-x:auto}
 .pairs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;font-size:12.5px}
 .pairs div span{display:block;font-size:11px;color:var(--muted)}
@@ -390,7 +399,7 @@ details.raw pre{
         </div>
 
         <div class="legend">
-          <span><b class="sw">Brass</b> strengthened — vargottama, exalted or own sign</span>
+          <span><b class="sw">Blue</b> strengthened — vargottama, exalted or own sign</span>
           <span><b class="sa">Red</b> afflicted — debilitated or combust</span>
           <span><b>R</b> retrograde</span>
         </div>
@@ -907,7 +916,7 @@ function conditionTags(p, vargottama){
   if(p.dignity)
     t.push('<span class="tag' + (p.dignity === 'debilitated' ? ' bad' : '') + '">' +
            esc(p.dignity) + '</span>');
-  if(p.retrograde) t.push('<span class="tag">retrograde</span>');
+  if(p.retrograde) t.push('<span class="tag neutral">retrograde</span>');
   if(p.combust)
     t.push('<span class="tag bad">combust ' +
            (p.sun_distance !== undefined ? p.sun_distance + '&deg;' : '') + '</span>');
