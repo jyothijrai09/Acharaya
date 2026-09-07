@@ -7,23 +7,26 @@ Design rule enforced here:
   The FULL computed context (natal chart + D9 navamsha + KP planet
   sub-lords + KP cusp sub-lords + dasha timeline + current dasha +
   numerology + live transits)
-  is rebuilt fresh and injected into EVERY single API call.
+  is rebuilt fresh and injected into EVERY single API call, whichever
+  provider is answering.
   The model never answers from a summary, a cached impression, or memory
   of an earlier turn's chart. Conversation history is passed separately,
   and the chart block is re-sent each turn.
 
-Requires: ANTHROPIC_API_KEY in environment.
-    pip install anthropic
+The model provider is selected in llm.py by LLM_PROVIDER:
+    anthropic (default) -> needs ANTHROPIC_API_KEY
+    gemini              -> needs GEMINI_API_KEY
 """
 
 import os
-from anthropic import Anthropic
+from llm import generate, current_model  # noqa: F401
 from astro_engine_v2 import (
     init_db, save_profile, list_profiles, get_profile,
     build_full_context, context_to_prompt_text
 )
 
-MODEL = "claude-opus-4-6"  # swap to a cheaper model for high-volume/low-stakes chat
+# The active model and provider are resolved in llm.py. Switch with
+# LLM_PROVIDER (anthropic | gemini) and, optionally, ASTRO_MODEL.
 
 # ---------------------------------------------------------------
 # SHARED RULES — appended to every persona so behavior is consistent
@@ -503,22 +506,16 @@ def ask_astrologer(profile_id, question, persona_key="integrated", history=None)
     The chart block is re-attached to the CURRENT question every turn, so the
     model always has live, complete data rather than a stale copy in history.
     """
-    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
     messages = list(history or [])
     messages.append({
         "role": "user",
         "content": f"{build_chart_block(profile_id)}\n\nQuestion: {question}"
     })
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=2000,
+    answer = generate(
         system=build_system_prompt(persona_key),
         messages=messages,
     )
-
-    answer = "".join(b.text for b in response.content if b.type == "text")
 
     # Store history WITHOUT the chart block, so it doesn't bloat context
     # across turns — the fresh block is re-added on the next call instead.

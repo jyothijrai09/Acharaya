@@ -1,6 +1,11 @@
 flask
-anthropic
 pyswisseph
+
+# Model providers. Only the one named by LLM_PROVIDER is imported at
+# runtime, so you may drop whichever you do not use.
+anthropic
+google-genai
+
 # PostgreSQL driver. Only imported when DATABASE_URL is set, so local
 # SQLite development works without it.
 psycopg[binary]
